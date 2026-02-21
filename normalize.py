@@ -7,8 +7,11 @@ Takes 6 piece IDs (1-4096) and normalizes the puzzle by:
   3. Replacing each piece with its lowest rotationally-equivalent ID
   4. Sorting piece IDs ascending
 
+Piece IDs can be decimal, hex (0x prefix), or binary (0b prefix).
+
 Usage:
     python normalize.py 65 1 256 154 888 35
+    python normalize.py 0x41 0b1 0x100 154 0x378 35
 """
 
 import sys
@@ -148,15 +151,24 @@ def normalize(piece_ids: list[int]) -> list[int]:
     return sorted(canonical_id(pid) for pid in piece_ids)
 
 
+def parse_piece_id(s: str) -> int:
+    """Parse a piece ID from a string. Supports decimal, 0x hex, and 0b binary."""
+    s = s.strip()
+    try:
+        return int(s, 0)
+    except ValueError:
+        raise ValueError(f"Invalid piece ID: {s!r}")
+
+
 def main():
     if len(sys.argv) != 7:
         print(f"Usage: {sys.argv[0]} <id1> <id2> <id3> <id4> <id5> <id6>", file=sys.stderr)
         sys.exit(1)
 
     try:
-        piece_ids = [int(arg) for arg in sys.argv[1:]]
-    except ValueError:
-        print("Error: All piece IDs must be integers", file=sys.stderr)
+        piece_ids = [parse_piece_id(arg) for arg in sys.argv[1:]]
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     try:
