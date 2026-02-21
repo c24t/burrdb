@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>6-Piece Burr Visualizer</title>
+    <!--
+        6-PIECE BURR PUZZLE VISUALIZER
+        ==============================
+
+        CONTEXT & PROBLEM SPACE:
+        ------------------------
+        A "6-Piece Burr" is a mechanical puzzle consisting of 6 notched rectangular prisms
+        (usually wood) that interlock to form a 3D cross shape.
+
+        GEOMETRY:
+        - Each piece is modeled as a 2x2x6 unit prism (Length=6, Width=2, Height=2).
+        - The piece is conceptually divided into 24 unit cubes ("voxels").
+        - The ends (indices x=0 and x=5) are typically solid/fixed.
+        - The core (indices x=1..4) contains 12 specific positions where "cubies" can be removed.
+
+        NUMBERING SYSTEM (Jürg von Känel / Bill Cutler):
+        - A piece is defined by which of these 12 removable cubies are missing.
+        - This allows for a 12-bit integer representation (0 to 4095).
+        - Piece ID = Bitmap + 1. (So ID 1 = Solid piece/No notches).
+        - ID Range: 1 to 4096.
+
+        COORDINATE SYSTEM (Internal):
+        - X-Axis: Length (0 to 5).
+        - Y-Axis: Width (0 to 1).
+        - Z-Axis: Height (0 to 1).
+        - Z-Up is used for the camera/visuals.
+
+        TAG DEFINITIONS:
+        - Notchable: Can be made with a table saw (dado blade) using straight cuts across the X-axis.
+                     Cross-sections must be rectangular; no "L" shapes or diagonals.
+        - Millable: Can be made with a milling machine. No "blind corners" (voids surrounded by solid material on 3 sides).
+        - Printable: Can be 3D printed FDM without supports. In at least one orientation (flat on a face),
+                     every solid voxel rests on another solid voxel or the build plate.
+    -->
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --panel-bg: rgba(0, 0, 0, 0.9);
+            --text-color: #ddd;
+            --accent-color: #007bff;
+            --border-color: #444;
+        }
+
+        body { margin: 0; overflow: hidden; background-color: var(--bg-color); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: white; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--panel-bg);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            width: 320px;
+            border: 1px solid var(--border-color);
+            pointer-events: auto;
+            max-height: 90vh;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1 { font-size: 18px; margin: 0 0 15px 0; color: var(--text-color); text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; flex-shrink: 0; }
+        h2 { font-size: 13px; margin: 15px 0 8px 0; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; border-top: 1px solid #333; padding-top: 10px; }
+
+        .control-group { margin-bottom: 10px; }
+        label { display: block; margin-bottom: 5px; font-size: 12px; color: #aaa; }
+
+        /* Input Styling */
+        .input-group {
+            display: flex;
+            align-items: center;
+            background: #2a2a2a;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding-left: 10px;
+            transition: border-color 0.2s;
+        }
+        .input-group:focus-within { border-color: var(--accent-color); background: #333; }
+        .prefix { color: #888; font-family: 'Consolas', monospace; font-size: 14px; margin-right: 5px; user-select: none; }
+        .input-group input, input[type="number"] {
+            border: none;
+            background: transparent;
+            padding: 8px 5px;
+            width: 100%;
+            color: #fff;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+        }
+        input[type="number"] { background: #2a2a2a; border: 1px solid var(--border-color); padding: 8px 10px; border-radius: 6px; box-sizing: border-box; }
+        input:focus { outline: none; border-color: var(--accent-color); }
+
+        /* Dropdown Styling */
+        select {
+            width: 100%;
+            padding: 8px 10px;
+            background: #2a2a2a;
+            border: 1px solid var(--border-color);
+            color: #fff;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', sans-serif;
+            margin-bottom: 5px;
+            cursor: pointer;
+        }
+        select:focus { outline: none; border-color: var(--accent-color); background: #333; }
+
+        /* Checkbox Grid Styles */
+        .layer-container {
+            background: #222;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 10px;
+        }
+        .cb-grid-top, .cb-grid-bottom {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 5px;
+            justify-items: center;
+        }
+        .checkbox-wrapper { display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+        .checkbox-wrapper input { cursor: pointer; width: 16px; height: 16px; accent-color: #ff4444; }
+        .checkbox-wrapper span { font-size: 10px; color: #666; margin-top: 2px; }
+        .layer-label { font-size: 11px; color: #888; margin-bottom: 5px; text-align: center; }
+
+        /* Footer / Status Area */
+        #status-area {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .info { font-size: 12px; color: #888; line-height: 1.5; }
+
+        .mode-indicator {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 5px;
+            font-size: 12px;
+            background: #004488;
+            color: white;
+        }
+
+        /* Tags */
+        #tags-container { display: flex; flex-wrap: wrap; gap: 5px; }
+        .tag {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .tag-notchable { background: #28a745; color: #fff; border: 1px solid #1e7e34; }
+        .tag-millable { background: #17a2b8; color: #fff; border: 1px solid #117a8b; }
+        .tag-printable { background: #fd7e14; color: #fff; border: 1px solid #e8590c; }
+
+        /* Warnings */
+        #conn-warning {
+            display: none;
+            background: #4a1a1a;
+            border: 1px solid #ff4444;
+            color: #ffcccc;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        #iso-warning {
+            display: none;
+            background: #443300;
+            border: 1px solid #aa8800;
+            color: #ffdd88;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        #iso-warning:hover { background: #664400; }
+        .iso-icon { margin-right: 5px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <h1>Burr Piece Visualizer</h1>
+
+        <div>
+            <div id="view-mode-indicator" class="mode-indicator">View: Component Cubes</div>
+        </div>
+        <div style="font-size: 11px; color: #888; margin-bottom: 15px;">
+            Press 'v' to switch view
+        </div>
+
+        <div class="control-group">
+            <label for="famousPieces">Famous Pieces</label>
+            <select id="famousPieces">
+                <option value="">-- Custom Piece --</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="pieceId">Decimal ID (1 - 4096)</label>
+            <input type="number" id="pieceId" value="1" min="1" max="4096">
+        </div>
+
+        <div class="control-group">
+            <label for="pieceBinary">Binary</label>
+            <div class="input-group">
+                <span class="prefix">0b</span>
+                <input type="text" id="pieceBinary" value="000000000000" maxlength="12">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label for="pieceHex">Hexadecimal</label>
+            <div class="input-group">
+                <span class="prefix">0x</span>
+                <input type="text" id="pieceHex" value="000" maxlength="3">
+            </div>
+        </div>
+
+        <h2>Edit Cubies (Uncheck to Remove)</h2>
+        <div class="layer-container">
+            <div class="layer-label">Top Layer (Z=1)</div>
+            <div class="cb-grid-top" id="grid-top"></div>
+        </div>
+        <div class="layer-container">
+            <div class="layer-label">Bottom Layer (Z=0)</div>
+            <div class="cb-grid-bottom" id="grid-bottom"></div>
+        </div>
+
+        <div id="status-area">
+            <div id="tags-container"></div>
+            <div id="conn-warning"><span class="iso-icon">✖</span><span>Piece is Disconnected!</span></div>
+            <div id="iso-warning"><span class="iso-icon">⚠</span><span id="iso-msg">Equivalent to #13</span></div>
+
+            <div class="info">
+                <p><strong>Top Grid:</strong> Bits 0-3 (Back), 4-7 (Front)</p>
+                <p><strong>Bottom Grid:</strong> Bits 8-9 (Back), 10-11 (Front)</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <!-- Import Map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+        import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+
+        // ==========================================
+        // 1. CONFIGURATION & CONSTANTS
+        // ==========================================
+
+        const CONFIG = {
+            colors: {
+                piece: 0x44aaff,
+                background: 0x1a1a1a,
+                wireframe: 0xffffff,
+                wireframeFace: 0x44aaff
+            },
+            grid: {
+                length: 6,
+                width: 2,
+                height: 2
+            },
+            shadows: {
+                mapSize: 2048,
+                blurSamples: 25,
+                radius: 30
+            }
+        };
+
+        const VIEW_MODES = ["Component Cubes", "Solid Shell", "Wireframe Shell", "Wireframe Cubes"];
+
+        // Bit Mapping: Maps bit index (0-11) to relative (x,y,z) coordinates.
+        // Coordinate System: Z is Up. X is Length. Y is Width.
+        const BIT_MAP = [
+            {x: 1, y: 1, z: 1}, {x: 2, y: 1, z: 1}, {x: 3, y: 1, z: 1}, {x: 4, y: 1, z: 1}, // Bits 0-3 (Top Back)
+            {x: 1, y: 0, z: 1}, {x: 2, y: 0, z: 1}, {x: 3, y: 0, z: 1}, {x: 4, y: 0, z: 1}, // Bits 4-7 (Top Front)
+            {x: 2, y: 1, z: 0}, {x: 3, y: 1, z: 0},                                         // Bits 8-9 (Bottom Back)
+            {x: 2, y: 0, z: 0}, {x: 3, y: 0, z: 0}                                          // Bits 10-11 (Bottom Front)
+        ];
+
+        // Standardized list of named pieces
+        const FAMOUS_PIECES = [
+            { id: 1, name: "1 - The Key" },
+            { id: 18, name: "18 - Local Mail" },
+            { id: 35, name: "35 - Out of Town Mail" },
+            { id: 52, name: "52 - The Side Tray" },
+            { id: 86, name: "86 - The Mailbox" }, // Corrected ID in data
+            { id: 103, name: "103 - The Half-Tray" },
+            { id: 120, name: "120 - The Three-Quarters Tray" },
+            { id: 154, name: "154 - The Toaster" },
+            { id: 188, name: "188 - The Bottle Opener" },
+            { id: 256, name: "256 - The Tray" },
+            { id: 359, name: "359 - The Notched Half-Tray (L)", sortId: 359 },
+            { id: 615, name: "615 - The Notched Half-Tray (R)", sortId: 359.1 },
+            { id: 792, name: "792 - The Wall (L)", sortId: 792 },
+            { id: 911, name: "911 - The Wall (R)", sortId: 792.1 },
+            { id: 824, name: "824 - The Offset (L)", sortId: 824 },
+            { id: 975, name: "975 - The Offset (R)", sortId: 824.1 },
+            { id: 856, name: "856 - The Fingered Club (L)", sortId: 856 },
+            { id: 943, name: "943 - The Fingered Club (R)", sortId: 856.1 },
+            { id: 871, name: "871 - The Barbells" },
+            { id: 888, name: "888 - The Club (L)", sortId: 888 },
+            { id: 1007, name: "1007 - The Club (R)", sortId: 888.1 },
+            { id: 928, name: "928 - The Tongue" },
+            { id: 960, name: "960 - The Finger (L)", sortId: 960 },
+            { id: 992, name: "992 - The Finger (R)", sortId: 960.1 },
+            { id: 1024, name: "1024 - The Y" }
+        ];
+        FAMOUS_PIECES.sort((a, b) => (a.sortId || a.id) - (b.sortId || b.id));
+
+        // Global State
+        let currentPieceValue = 1;
+        let currentViewMode = 0;
+        let isUpdating = false;
+
+        // ==========================================
+        // 2. GRID & MATH HELPERS
+        // ==========================================
+
+        /**
+         * Converts a piece ID (1-4096) into a 6x2x2 boolean grid.
+         * True = Solid voxel, False = Empty/Removed.
+         */
+        function idToVoxelGrid(id) {
+            const bitmap = id - 1;
+            const grid = [];
+            for(let x=0; x<CONFIG.grid.length; x++) {
+                grid[x] = [];
+                for(let y=0; y<CONFIG.grid.width; y++) {
+                    grid[x][y] = [];
+                    for(let z=0; z<CONFIG.grid.height; z++) {
+                        // Check if this position is one of the 12 removable ones
+                        const mapIndex = BIT_MAP.findIndex(p => p.x === x && p.y === y && p.z === z);
+                        if (mapIndex !== -1) {
+                            // If bit is 1, it's removed (false). If 0, it's present (true).
+                            grid[x][y][z] = !((bitmap >> mapIndex) & 1);
+                        } else {
+                            // Positions not in the bitmap map are solid parts of the 2x2x6 prism
+                            grid[x][y][z] = true;
+                        }
+                    }
+                }
+            }
+            return grid;
+        }
+
+        /** Creates an empty 6x2x2 boolean grid (all false) */
+        function createEmptyGrid() {
+            const g = [];
+            for(let x=0;x<6;x++){ g[x]=[]; for(let y=0;y<2;y++){ g[x][y]=[]; for(let z=0;z<2;z++) g[x][y][z]=false; } }
+            return g;
+        }
+
+        /**
+         * Transforms a grid by flipping ends (180 deg Z) and rotating around X axis.
+         * Used for finding isomorphic forms and printable orientations.
+         */
+        function transformGrid(src, flipEnds, rotXSteps) {
+            const dst = createEmptyGrid();
+
+            for(let x=0; x<6; x++) {
+                for(let y=0; y<2; y++) {
+                    for(let z=0; z<2; z++) {
+                        if (!src[x][y][z]) continue;
+
+                        // 1. Flip Ends (Rotate 180 Z)
+                        let nx = x, ny = y, nz = z;
+                        if (flipEnds) {
+                            nx = 5 - x;
+                            ny = 1 - y;
+                        }
+
+                        // 2. Rotate around X (steps of 90 deg)
+                        // Center of Y,Z rotation is 0.5, 0.5
+                        for (let r = 0; r < rotXSteps; r++) {
+                            const tmpY = ny;
+                            ny = nz;
+                            nz = 1 - tmpY;
+                        }
+
+                        if (nx >=0 && nx<6 && ny>=0 && ny<2 && nz>=0 && nz<2) {
+                            dst[nx][ny][nz] = true;
+                        }
+                    }
+                }
+            }
+            return dst;
+        }
+
+        /**
+         * Converts a 6x2x2 grid back to an ID (1-4096).
+         * Returns null if the grid doesn't match the valid burr piece skeleton
+         * (i.e., has holes in fixed positions).
+         */
+        function gridToID(grid) {
+            // Check mandatory solid positions
+            if (!grid[1][0][0]) return null;
+            if (!grid[1][1][0]) return null;
+            if (!grid[4][0][0]) return null;
+            if (!grid[4][1][0]) return null;
+            if (!grid[0][0][0]) return null; // Endcap check
+
+            let bitmap = 0;
+            for (let i = 0; i < BIT_MAP.length; i++) {
+                const pos = BIT_MAP[i];
+                // If voxel is missing (false), set the bit
+                if (!grid[pos.x][pos.y][pos.z]) {
+                    bitmap |= (1 << i);
+                }
+            }
+            return bitmap + 1;
+        }
+
+        // ==========================================
+        // 3. ANALYSIS ALGORITHMS
+        // ==========================================
+
+        // --- CONNECTIVITY (Flood Fill) ---
+        function checkConnectivity(val) {
+            const grid = idToVoxelGrid(val);
+            let totalVoxels = 0;
+            let startNode = null;
+
+            for(let x=0; x<6; x++) for(let y=0; y<2; y++) for(let z=0; z<2; z++) {
+                if (grid[x][y][z]) {
+                    totalVoxels++;
+                    if (!startNode) startNode = {x, y, z};
+                }
+            }
+
+            if (totalVoxels === 0) return true;
+
+            // BFS Flood Fill
+            const visited = createEmptyGrid();
+            let queue = [startNode];
+            visited[startNode.x][startNode.y][startNode.z] = true;
+            let visitedCount = 0;
+
+            const neighbors = [
+                {dx: 1, dy: 0, dz: 0}, {dx: -1, dy: 0, dz: 0},
+                {dx: 0, dy: 1, dz: 0}, {dx: 0, dy: -1, dz: 0},
+                {dx: 0, dy: 0, dz: 1}, {dx: 0, dy: 0, dz: -1}
+            ];
+
+            while(queue.length > 0) {
+                const current = queue.pop();
+                visitedCount++;
+                for (let n of neighbors) {
+                    const nx = current.x + n.dx;
+                    const ny = current.y + n.dy;
+                    const nz = current.z + n.dz;
+                    if (nx >= 0 && nx < 6 && ny >= 0 && ny < 2 && nz >= 0 && nz < 2) {
+                        if (grid[nx][ny][nz] && !visited[nx][ny][nz]) {
+                            visited[nx][ny][nz] = true;
+                            queue.push({x: nx, y: ny, z: nz});
+                        }
+                    }
+                }
+            }
+
+            const warningEl = document.getElementById('conn-warning');
+            warningEl.style.display = (visitedCount !== totalVoxels) ? 'block' : 'none';
+        }
+
+        // --- ISOMORPHISM CHECK ---
+        function checkIsomorphism(val) {
+            const originalGrid = idToVoxelGrid(val);
+            let minID = val;
+
+            // Test 8 Symmetries: 2 Flips (Ends) * 4 X-Rotations
+            for (let flip = 0; flip <= 1; flip++) {
+                for (let rot = 0; rot < 4; rot++) {
+                    if (flip === 0 && rot === 0) continue; // Skip self
+
+                    const tGrid = transformGrid(originalGrid, flip === 1, rot);
+                    const id = gridToID(tGrid);
+
+                    if (id !== null && id < minID) {
+                        minID = id;
+                    }
+                }
+            }
+
+            const warningEl = document.getElementById('iso-warning');
+            if (minID < val) {
+                document.getElementById('iso-msg').textContent = `Equivalent to Piece #${minID} (Rotated)`;
+                warningEl.style.display = 'block';
+                warningEl.onclick = () => updateAll(minID);
+            } else {
+                warningEl.style.display = 'none';
+            }
+        }
+
+        // --- TAGGING: NOTCHABLE ---
+        function checkNotchable(grid) {
+            // "Rectangle Rule": Every X cross-section must be rectangular.
+            for(let x=0; x<6; x++) {
+                const y0z0 = grid[x][0][0]; const y0z1 = grid[x][0][1];
+                const y1z0 = grid[x][1][0]; const y1z1 = grid[x][1][1];
+                const count = (y0z0?1:0) + (y0z1?1:0) + (y1z0?1:0) + (y1z1?1:0);
+
+                if (count === 3) return false; // Forbidden "L" shape
+                if (count === 2) {
+                    // Forbidden Diagonal
+                    if ((y0z0 && y1z1) || (y0z1 && y1z0)) return false;
+                }
+            }
+            return true;
+        }
+
+        // --- TAGGING: MILLABLE ---
+        function checkMillable(grid) {
+            // "Blind Corner Rule": No removed voxel can be blocked in all 3 axes.
+            for(let x=0; x<6; x++) {
+                for(let y=0; y<2; y++) {
+                    for(let z=0; z<2; z++) {
+                        if (!grid[x][y][z]) {
+                            const solidY = grid[x][1-y][z];
+                            const solidZ = grid[x][y][1-z];
+                            const solidXPrev = (x > 0) ? grid[x-1][y][z] : false;
+                            const solidXNext = (x < 5) ? grid[x+1][y][z] : false;
+                            if (solidY && solidZ && (solidXPrev || solidXNext)) return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        // --- TAGGING: PRINTABLE ---
+        function checkPrintable(originalGrid) {
+            // "Gravity Test": In at least one flat orientation, no floating voxels.
+            for (let r = 0; r < 4; r++) {
+                // Rotate to test orientation r
+                const grid = transformGrid(originalGrid, false, r);
+                let isOrientationPrintable = true;
+
+                // Assume Z=0 is bottom (build plate)
+                for (let x = 0; x < 6; x++) {
+                    for (let y = 0; y < 2; y++) {
+                        // If top layer (1) exists, bottom layer (0) must exist.
+                        if (grid[x][y][1] && !grid[x][y][0]) {
+                            isOrientationPrintable = false;
+                            break;
+                        }
+                    }
+                    if (!isOrientationPrintable) break;
+                }
+                if (isOrientationPrintable) return true;
+            }
+            return false;
+        }
+
+        // ==========================================
+        // 4. THREE.JS VISUALIZATION
+        // ==========================================
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(CONFIG.colors.background);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.up.set(0, 0, 1);
+        camera.position.set(8, 8, 8);
+        scene.add(camera);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.VSMShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // Lighting Setup
+        scene.add(new THREE.HemisphereLight(0xddeeff, 0x222222, 0.75));
+
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        keyLight.position.set(5, 10, 5);
+        keyLight.castShadow = true;
+        keyLight.shadow.mapSize.set(2048, 2048);
+        keyLight.shadow.bias = -0.0001;
+        keyLight.shadow.blurSamples = CONFIG.shadows.blurSamples;
+        keyLight.shadow.radius = CONFIG.shadows.radius;
+        camera.add(keyLight); // Attached to camera for "headlamp" effect
+
+        const fillLight = new THREE.DirectionalLight(0xEEF5FF, 0.5);
+        fillLight.position.set(-5, 0, 5);
+        camera.add(fillLight);
+
+        // Materials
+        const pieceMat = new THREE.MeshStandardMaterial({
+            color: CONFIG.colors.piece,
+            roughness: 0.6,
+            metalness: 0.1
+        });
+        const wireFaceMat = new THREE.MeshBasicMaterial({
+            color: CONFIG.colors.wireframeFace,
+            opacity: 0.1,
+            transparent: true,
+            depthWrite: false
+        });
+        const wireEdgeColor = CONFIG.colors.wireframe;
+
+        let pieceGroup = new THREE.Group();
+        scene.add(pieceGroup);
+
+        /**
+         * Generates a mesh geometry for the outer shell of the voxel grid.
+         * Used for the "Solid Shell" view mode.
+         */
+        function generateShellGeometry(grid) {
+            const geometries = [];
+            for (let x = 0; x < 6; x++) {
+                for (let y = 0; y < 2; y++) {
+                    for (let z = 0; z < 2; z++) {
+                        if (!grid[x][y][z]) continue;
+
+                        const px = -(x - 2.5); // X-Flip for visualization
+                        const py = (y - 0.5);
+                        const pz = (z - 0.5);
+
+                        const neighbors = [
+                            { dx: 1, dy: 0, dz: 0, face: 'right', rx: 0, ry: -Math.PI/2, rz: 0, ox: -0.5, oy: 0, oz: 0 },
+                            { dx: -1, dy: 0, dz: 0, face: 'left', rx: 0, ry: Math.PI/2, rz: 0, ox: 0.5, oy: 0, oz: 0 },
+                            { dx: 0, dy: 1, dz: 0, face: 'top', rx: -Math.PI/2, ry: 0, rz: 0, ox: 0, oy: 0.5, oz: 0 },
+                            { dx: 0, dy: -1, dz: 0, face: 'bottom', rx: Math.PI/2, ry: 0, rz: 0, ox: 0, oy: -0.5, oz: 0 },
+                            { dx: 0, dy: 0, dz: 1, face: 'front', rx: 0, ry: 0, rz: 0, ox: 0, oy: 0, oz: 0.5 },
+                            { dx: 0, dy: 0, dz: -1, face: 'back', rx: 0, ry: Math.PI, rz: 0, ox: 0, oy: 0, oz: -0.5 }
+                        ];
+
+                        neighbors.forEach(n => {
+                            const nx = x + n.dx, ny = y + n.dy, nz = z + n.dz;
+                            let hasNeighbor = false;
+                            if (nx >= 0 && nx < 6 && ny >= 0 && ny < 2 && nz >= 0 && nz < 2) {
+                                hasNeighbor = grid[nx][ny][nz];
+                            }
+                            if (!hasNeighbor) {
+                                const plane = new THREE.PlaneGeometry(1, 1);
+                                plane.rotateX(n.rx); plane.rotateY(n.ry); plane.rotateZ(n.rz);
+                                plane.translate(px + n.ox, py + n.oy, pz + n.oz);
+                                geometries.push(plane);
+                            }
+                        });
+                    }
+                }
+            }
+            if (geometries.length === 0) return new THREE.BufferGeometry();
+            return BufferGeometryUtils.mergeGeometries(geometries);
+        }
+
+        /** Updates the 3D Scene based on current ID and View Mode */
+        function updateMainView(val) {
+            // Clear current objects
+            while(pieceGroup.children.length > 0){
+                const obj = pieceGroup.children[0];
+                if (obj.geometry) obj.geometry.dispose();
+                pieceGroup.remove(obj);
+            }
+
+            const grid = idToVoxelGrid(val);
+            const size = 1;
+
+            if (currentViewMode === 0) {
+                // Mode 0: Individual Rounded Cubes
+                const bevel = 0.05;
+                const geo = new RoundedBoxGeometry(size - 0.02, size - 0.02, size - 0.02, 2, bevel);
+                for(let x=0; x<6; x++) for(let y=0; y<2; y++) for(let z=0; z<2; z++) {
+                    if (grid[x][y][z]) {
+                        const mesh = new THREE.Mesh(geo, pieceMat);
+                        mesh.position.set(-(x - 2.5), y - 0.5, z - 0.5);
+                        mesh.castShadow = true;
+                        mesh.receiveShadow = true;
+                        pieceGroup.add(mesh);
+                    }
+                }
+            }
+            else if (currentViewMode === 1) {
+                // Mode 1: Solid Shell
+                const shellGeo = generateShellGeometry(grid);
+                shellGeo.computeVertexNormals();
+                const mesh = new THREE.Mesh(shellGeo, pieceMat);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                pieceGroup.add(mesh);
+            }
+            else if (currentViewMode === 2) {
+                // Mode 2: Wireframe Shell
+                const shellGeo = generateShellGeometry(grid);
+                const mesh = new THREE.Mesh(shellGeo, wireFaceMat);
+                const edges = new THREE.EdgesGeometry(shellGeo);
+                const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: wireEdgeColor }));
+                pieceGroup.add(mesh);
+                pieceGroup.add(line);
+            }
+            else if (currentViewMode === 3) {
+                // Mode 3: Wireframe Cubes
+                const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+                const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+                const edgesMat = new THREE.LineBasicMaterial({ color: wireEdgeColor });
+                for(let x=0; x<6; x++) for(let y=0; y<2; y++) for(let z=0; z<2; z++) {
+                    if (grid[x][y][z]) {
+                        const pos = new THREE.Vector3(-(x - 2.5), y - 0.5, z - 0.5);
+                        const mesh = new THREE.Mesh(boxGeo, wireFaceMat);
+                        mesh.position.copy(pos);
+                        const line = new THREE.LineSegments(edgesGeo, edgesMat);
+                        line.position.copy(pos);
+                        pieceGroup.add(mesh);
+                        pieceGroup.add(line);
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // 5. UI & INTERACTION Logic
+        // ==========================================
+
+        function updateTags(val) {
+            const grid = idToVoxelGrid(val);
+            const container = document.getElementById('tags-container');
+            container.innerHTML = '';
+
+            const tags = [
+                { check: checkMillable, name: 'Millable', class: 'tag-millable' },
+                { check: checkNotchable, name: 'Notchable', class: 'tag-notchable' },
+                { check: checkPrintable, name: 'Printable', class: 'tag-printable' }
+            ];
+
+            tags.forEach(t => {
+                if (t.check(grid)) {
+                    const el = document.createElement('div');
+                    el.className = `tag ${t.class}`;
+                    el.textContent = t.name;
+                    container.appendChild(el);
+                }
+            });
+        }
+
+        // Init Checkbox Grid
+        function createCheckbox(bitIndex) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'checkbox-wrapper';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.id = `cb-${bitIndex}`;
+            cb.addEventListener('change', () => { if(!isUpdating) toggleBit(bitIndex, cb.checked); });
+            const label = document.createElement('span');
+            label.textContent = bitIndex;
+            wrapper.appendChild(cb);
+            wrapper.appendChild(label);
+            return wrapper;
+        }
+
+        const topGrid = document.getElementById('grid-top');
+        [0, 1, 2, 3].forEach(i => topGrid.appendChild(createCheckbox(i)));
+        [4, 5, 6, 7].forEach(i => topGrid.appendChild(createCheckbox(i)));
+
+        const botGrid = document.getElementById('grid-bottom');
+        botGrid.appendChild(document.createElement('div'));
+        botGrid.appendChild(createCheckbox(8));
+        botGrid.appendChild(createCheckbox(9));
+        botGrid.appendChild(document.createElement('div'));
+        botGrid.appendChild(document.createElement('div'));
+        botGrid.appendChild(createCheckbox(10));
+        botGrid.appendChild(createCheckbox(11));
+        botGrid.appendChild(document.createElement('div'));
+
+        // Init Dropdown
+        const famousSelect = document.getElementById('famousPieces');
+        FAMOUS_PIECES.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.name;
+            famousSelect.appendChild(opt);
+        });
+
+        // UI Update Helpers
+        function toggleBit(bitIndex, isChecked) {
+            let bitmap = currentPieceValue - 1;
+            if (!isChecked) bitmap = bitmap | (1 << bitIndex);
+            else bitmap = bitmap & ~(1 << bitIndex);
+            updateAll(bitmap + 1);
+        }
+
+        function switchViewMode() {
+            currentViewMode = (currentViewMode + 1) % 4;
+            const label = document.getElementById('view-mode-indicator');
+            label.textContent = `View: ${VIEW_MODES[currentViewMode]}`;
+            updateMainView(currentPieceValue);
+        }
+
+        /** Master Update Function */
+        function updateAll(val) {
+            if (isUpdating) return;
+            isUpdating = true;
+
+            // Validate
+            val = Math.max(1, Math.min(4096, val));
+            currentPieceValue = val;
+            const bitmap = val - 1;
+
+            // Sync DOM Elements
+            const decimalInput = document.getElementById('pieceId');
+            if (document.activeElement !== decimalInput) decimalInput.value = val;
+
+            const binaryInput = document.getElementById('pieceBinary');
+            if (document.activeElement !== binaryInput) binaryInput.value = bitmap.toString(2).padStart(12, '0');
+
+            const hexInput = document.getElementById('pieceHex');
+            if (document.activeElement !== hexInput) hexInput.value = bitmap.toString(16).toUpperCase().padStart(3, '0');
+
+            const famousInput = document.getElementById('famousPieces');
+            const isFamous = FAMOUS_PIECES.some(p => p.id === val);
+            famousInput.value = isFamous ? val : "";
+
+            // Sync Checkboxes
+            for(let i=0; i<12; i++) {
+                const cb = document.getElementById(`cb-${i}`);
+                if(cb) cb.checked = ((bitmap >> i) & 1) === 0; // Check if bit is 0 (Solid)
+            }
+
+            // Run Visualization & Analysis
+            updateMainView(val);
+            updateTags(val);
+            checkIsomorphism(val);
+            checkConnectivity(val);
+
+            isUpdating = false;
+        }
+
+        // --- EVENTS ---
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'v') switchViewMode();
+        });
+
+        document.getElementById('famousPieces').addEventListener('change', (e) => {
+            const val = parseInt(e.target.value);
+            if (!isNaN(val)) updateAll(val);
+        });
+
+        document.getElementById('pieceId').addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if(isNaN(val)) val = 1;
+            updateAll(val);
+        });
+
+        document.getElementById('pieceBinary').addEventListener('input', (e) => {
+            let raw = e.target.value.replace(/[^0-1]/g, '');
+            if (raw.length > 12) raw = raw.slice(0, 12);
+            let bitmap = raw.length > 0 ? parseInt(raw, 2) : 0;
+            updateAll(bitmap + 1);
+        });
+
+        document.getElementById('pieceHex').addEventListener('input', (e) => {
+            let raw = e.target.value.replace(/[^0-9a-fA-F]/g, '');
+            if (raw.length > 3) raw = raw.slice(0, 3);
+            let bitmap = raw.length > 0 ? parseInt(raw, 16) : 0;
+            updateAll(bitmap + 1);
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Animation Loop
+        const azEl = document.getElementById('val-azimuth');
+        const polEl = document.getElementById('val-polar');
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+
+            if (azEl && polEl) {
+                azEl.textContent = (controls.getAzimuthalAngle() * (180 / Math.PI)).toFixed(1);
+                polEl.textContent = (controls.getPolarAngle() * (180 / Math.PI)).toFixed(1);
+            }
+        }
+
+        // Boot
+        updateAll(1);
+        animate();
+
+    </script>
+</body>
+</html>
