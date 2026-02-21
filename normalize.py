@@ -8,10 +8,13 @@ Takes 6 piece IDs (1-4096) and normalizes the puzzle by:
   4. Sorting piece IDs ascending
 
 Piece IDs can be decimal, hex (0x prefix), or binary (0b prefix).
+A compact puzzle ID (18 hex digits, optional 0x prefix) is also accepted.
 
 Usage:
     python normalize.py 65 1 256 154 888 35
     python normalize.py 0x41 0b1 0x100 154 0x378 35
+    python normalize.py 001003023099100378
+    python normalize.py 0x001003023099100378
     python normalize.py -v 65 1 256 154 888 35
     python normalize.py -s 1 1 1 1 1 1
 """
@@ -182,6 +185,20 @@ def normalize(piece_ids: list[int], verbose: bool = False) -> list[int]:
     return result
 
 
+def parse_puzzle_id(s: str) -> list[int]:
+    """Parse a compact puzzle ID (18 hex digits, optional 0x prefix) into 6 piece IDs."""
+    hex_str = s[2:] if s.lower().startswith("0x") else s
+    if len(hex_str) != 18:
+        raise ValueError(f"Puzzle ID must be exactly 18 hex digits, got {len(hex_str)}")
+    return [int(hex_str[i:i+3], 16) for i in range(0, 18, 3)]
+
+
+def is_puzzle_id(s: str) -> bool:
+    """Check if a string looks like a compact puzzle ID (18 hex digits, optional 0x prefix)."""
+    hex_str = s[2:] if s.lower().startswith("0x") else s
+    return len(hex_str) == 18 and all(c in "0123456789abcdefABCDEF" for c in hex_str)
+
+
 def parse_piece_id(s: str) -> int:
     """Parse a piece ID from a string. Supports decimal, 0x hex, and 0b binary."""
     s = s.strip()
@@ -197,7 +214,7 @@ def main():
     )
     parser.add_argument(
         "pieces", nargs="+", metavar="ID",
-        help="Piece IDs (decimal, 0x hex, or 0b binary)"
+        help="Piece IDs (decimal, 0x hex, or 0b binary), or a single compact puzzle ID (18 hex digits)"
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",
@@ -210,7 +227,10 @@ def main():
     args = parser.parse_args()
 
     try:
-        piece_ids = [parse_piece_id(s) for s in args.pieces]
+        if len(args.pieces) == 1 and is_puzzle_id(args.pieces[0]):
+            piece_ids = parse_puzzle_id(args.pieces[0])
+        else:
+            piece_ids = [parse_piece_id(s) for s in args.pieces]
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

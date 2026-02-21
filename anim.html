@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bill's Baffling Burr — Disassembly Animation</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255,255,255,0.6);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            pointer-events: none;
+            user-select: none;
+        }
+        #title {
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            margin: 0;
+        }
+        #subtitle {
+            font-size: 11px;
+            color: rgba(255,255,255,0.35);
+            margin: 4px 0 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <p id="title">Bill's Baffling Burr</p>
+        <p id="subtitle">Level 5 &middot; 24 assemblies, 1 unique solution</p>
+    </div>
+
+    <script type="importmap">{
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }</script>
+
+    <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+    // ================================================================
+    // PUZZLE DATA — Bill's Baffling Burr
+    // Pieces 103, 760, 960, 992, 996, 1024
+    // Solution extracted from BurrTools burrTxt2 with -d flag
+    // ================================================================
+
+    const PIECE_IDS  = [103, 760, 960, 992, 996, 1024];
+    const TRANSFORMS = [0, 5, 19, 8, 23, 15];
+
+    // Distinct, colorblind-friendly palette
+    const COLORS = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x42d4f4, 0xf032e6];
+
+    // BurrTools 24 rotation matrices (row-major 3x3: m00 m01 m02 m10 m11 m12 m20 m21 m22)
+    // From src/lib/tabs_0/rotmatrix.inc — first 24 are pure rotations
+    const ROT = [
+        [ 1, 0, 0,  0, 1, 0,  0, 0, 1],  //  0
+        [ 1, 0, 0,  0, 0,-1,  0, 1, 0],  //  1
+        [ 1, 0, 0,  0,-1, 0,  0, 0,-1],  //  2
+        [ 1, 0, 0,  0, 0, 1,  0,-1, 0],  //  3
+        [ 0, 0,-1,  0, 1, 0,  1, 0, 0],  //  4
+        [ 0,-1, 0,  0, 0,-1,  1, 0, 0],  //  5
+        [ 0, 0, 1,  0,-1, 0,  1, 0, 0],  //  6
+        [ 0, 1, 0,  0, 0, 1,  1, 0, 0],  //  7
+        [-1, 0, 0,  0, 1, 0,  0, 0,-1],  //  8
+        [-1, 0, 0,  0, 0,-1,  0,-1, 0],  //  9
+        [-1, 0, 0,  0,-1, 0,  0, 0, 1],  // 10
+        [-1, 0, 0,  0, 0, 1,  0, 1, 0],  // 11
+        [ 0, 0, 1,  0, 1, 0, -1, 0, 0],  // 12
+        [ 0, 1, 0,  0, 0,-1, -1, 0, 0],  // 13
+        [ 0, 0,-1,  0,-1, 0, -1, 0, 0],  // 14
+        [ 0,-1, 0,  0, 0, 1, -1, 0, 0],  // 15
+        [ 0,-1, 0,  1, 0, 0,  0, 0, 1],  // 16
+        [ 0, 0, 1,  1, 0, 0,  0, 1, 0],  // 17
+        [ 0, 1, 0,  1, 0, 0,  0, 0,-1],  // 18
+        [ 0, 0,-1,  1, 0, 0,  0,-1, 0],  // 19
+        [ 0, 1, 0, -1, 0, 0,  0, 0, 1],  // 20
+        [ 0, 0,-1, -1, 0, 0,  0, 1, 0],  // 21
+        [ 0,-1, 0, -1, 0, 0,  0, 0,-1],  // 22
+        [ 0, 0, 1, -1, 0, 0,  0,-1, 0],  // 23
+    ];
+
+    // Bit index -> (x, y, z) in the 6x2x2 piece grid.  Bit set = cubie removed.
+    const BIT_MAP = [
+        [1,1,1],[2,1,1],[3,1,1],[4,1,1],   // bits 0-3  Top Back
+        [1,0,1],[2,0,1],[3,0,1],[4,0,1],   // bits 4-7  Top Front
+        [2,1,0],[3,1,0],                    // bits 8-9  Bottom Back
+        [2,0,0],[3,0,0],                    // bits 10-11 Bottom Front
+    ];
+
+    // Disassembly keyframes — 10 states, 9 transitions
+    // Each state: 6 piece positions [x, y, z] in the 6x6x6 assembly grid
+    //
+    // Root separation (Level 5 — 5 coordinated moves to free piece 5):
+    //   KF0→1 : piece 0 slides x−1
+    //   KF1→2 : piece 4 slides y+1
+    //   KF2→3 : piece 1 slides z−1
+    //   KF3→4 : piece 4 slides y+1
+    //   KF4→5 : piece 5 exits −x (slides 6 units out)
+    // Then 4 single-piece exits:
+    //   KF5→6 : piece 3 exits +z
+    //   KF6→7 : piece 2 exits +x
+    //   KF7→8 : piece 1 exits +x
+    //   KF8→9 : piece 0 exits +y
+    const KEYFRAMES = [
+        [[ 0,2, 1],[ 3,4, 0],[ 4,0, 3],[ 5,2, 4],[ 1,5,3],[ 3,1, 5]],  // KF0  assembled
+        [[-1,2, 1],[ 3,4, 0],[ 4,0, 3],[ 5,2, 4],[ 1,5,3],[ 3,1, 5]],  // KF1
+        [[-1,2, 1],[ 3,4, 0],[ 4,0, 3],[ 5,2, 4],[ 1,6,3],[ 3,1, 5]],  // KF2
+        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2, 4],[ 1,6,3],[ 3,1, 5]],  // KF3
+        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2, 4],[ 1,7,3],[ 3,1, 5]],  // KF4
+        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2, 4],[ 1,7,3],[-3,1, 5]],  // KF5  piece 5 out
+        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF6  piece 3 out
+        [[-1,2, 1],[ 3,4,-1],[10,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF7  piece 2 out
+        [[-1,2, 1],[ 9,4,-1],[10,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF8  piece 1 out
+        [[-1,8, 1],[ 9,4,-1],[10,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF9  piece 0 out
+    ];
+
+    // ================================================================
+    // PIECE VOXEL GENERATION
+    // ================================================================
+
+    /** Convert piece ID (1-4096) to list of solid voxel [x,y,z] coords in 6x2x2 grid */
+    function getPieceVoxels(pieceId) {
+        const bitmap = pieceId - 1;
+        // Build lookup: "x,y,z" → bit index  (only for the 12 removable positions)
+        const removable = new Map();
+        BIT_MAP.forEach((pos, idx) => removable.set(`${pos[0]},${pos[1]},${pos[2]}`, idx));
+
+        const voxels = [];
+        for (let z = 0; z < 2; z++)
+            for (let y = 0; y < 2; y++)
+                for (let x = 0; x < 6; x++) {
+                    const bitIdx = removable.get(`${x},${y},${z}`);
+                    if (bitIdx !== undefined) {
+                        // Removable position: solid unless corresponding bit is set
+                        if (!((bitmap >> bitIdx) & 1)) voxels.push([x, y, z]);
+                    } else {
+                        // Fixed position: always solid
+                        voxels.push([x, y, z]);
+                    }
+                }
+        return voxels;
+    }
+
+    /** Apply rotation matrix M to point (x,y,z), return [x',y',z'] */
+    function applyRot(M, x, y, z) {
+        return [
+            M[0]*x + M[1]*y + M[2]*z,
+            M[3]*x + M[4]*y + M[5]*z,
+            M[6]*x + M[7]*y + M[8]*z,
+        ];
+    }
+
+    // ================================================================
+    // THREE.JS SCENE SETUP
+    // ================================================================
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a1a);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 200);
+    camera.up.set(0, 0, 1);     // Z-up convention
+    camera.position.set(14, 14, 11);
+    scene.add(camera);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.5;
+
+    // Lighting: hemisphere ambient + camera-attached key/fill
+    scene.add(new THREE.HemisphereLight(0xddeeff, 0x222222, 0.8));
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    keyLight.position.set(5, 10, 8);
+    camera.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xeef5ff, 0.4);
+    fillLight.position.set(-8, -3, 4);
+    camera.add(fillLight);
+
+    // ================================================================
+    // BUILD PIECE MESHES
+    // ================================================================
+
+    // Center offset: the 6x6x6 grid spans [0,5] in each axis, center at 2.5
+    const CX = 2.5, CY = 2.5, CZ = 2.5;
+
+    // Shared geometry for individual cubies
+    const cubieGeom = new RoundedBoxGeometry(0.94, 0.94, 0.94, 2, 0.06);
+
+    const pieceGroups = [];
+
+    for (let i = 0; i < 6; i++) {
+        const group = new THREE.Group();
+        const mat = new THREE.MeshStandardMaterial({
+            color: COLORS[i],
+            roughness: 0.5,
+            metalness: 0.12,
+        });
+
+        // Get solid voxels and apply the piece's rotation transform
+        const voxels = getPieceVoxels(PIECE_IDS[i]);
+        const M = ROT[TRANSFORMS[i]];
+
+        for (const [lx, ly, lz] of voxels) {
+            // Rotate local voxel to assembly orientation
+            // Global voxel position = placement + M * local
+            // Within the group, store the rotated-local offset;
+            // the group.position provides the placement offset.
+            const [rx, ry, rz] = applyRot(M, lx, ly, lz);
+            const mesh = new THREE.Mesh(cubieGeom, mat);
+            mesh.position.set(rx, ry, rz);
+            group.add(mesh);
+        }
+
+        // Initial position: KF0 (assembled), centered
+        const [px, py, pz] = KEYFRAMES[0][i];
+        group.position.set(px - CX, py - CY, pz - CZ);
+
+        scene.add(group);
+        pieceGroups.push(group);
+    }
+
+    // ================================================================
+    // ANIMATION ENGINE
+    // ================================================================
+
+    const MOVE_SPEED  = 1.8;    // keyframe transitions per second
+    const PAUSE_SECS  = 2.0;    // seconds to hold at each end
+    const N_STEPS     = KEYFRAMES.length - 1;  // 9 transitions
+
+    let t         = 0;     // continuous progress in [0, N_STEPS]
+    let dir       = 1;     // +1 disassemble, -1 assemble
+    let paused    = true;  // start with a pause at assembled state
+    let pauseTime = 0;
+
+    /** Hermite smoothstep for pleasant easing */
+    function ease(x) { return x * x * (3 - 2 * x); }
+
+    function tick(dt) {
+        // Handle pause at endpoints
+        if (paused) {
+            pauseTime += dt;
+            if (pauseTime >= PAUSE_SECS) {
+                paused = false;
+                pauseTime = 0;
+            }
+            return;
+        }
+
+        // Advance animation time
+        t += dir * dt * MOVE_SPEED;
+
+        // Clamp and trigger pause + direction flip at endpoints
+        if (t >= N_STEPS) {
+            t = N_STEPS;
+            dir = -1;
+            paused = true;
+            pauseTime = 0;
+        } else if (t <= 0) {
+            t = 0;
+            dir = 1;
+            paused = true;
+            pauseTime = 0;
+        }
+
+        // Determine which two keyframes we're interpolating between
+        const kf   = Math.min(Math.floor(t), N_STEPS - 1);
+        const frac = ease(Math.max(0, Math.min(1, t - kf)));
+
+        // Lerp each piece's position
+        for (let i = 0; i < 6; i++) {
+            const a = KEYFRAMES[kf][i];
+            const b = KEYFRAMES[kf + 1][i];
+            pieceGroups[i].position.set(
+                a[0] + (b[0] - a[0]) * frac - CX,
+                a[1] + (b[1] - a[1]) * frac - CY,
+                a[2] + (b[2] - a[2]) * frac - CZ,
+            );
+        }
+    }
+
+    // ================================================================
+    // RENDER LOOP
+    // ================================================================
+
+    // Use a wall-clock timer so animation progresses even when
+    // requestAnimationFrame is throttled (e.g. background tabs).
+    let lastTime = performance.now();
+
+    // Tick at 60 Hz via setInterval (immune to rAF throttling)
+    setInterval(() => {
+        const now = performance.now();
+        const dt = Math.min((now - lastTime) / 1000, 0.1);
+        lastTime = now;
+        tick(dt);
+    }, 16);
+
+    // Render whenever the browser allows
+    function render() {
+        requestAnimationFrame(render);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    render();
+
+    // Responsive resize
+    addEventListener('resize', () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+    });
+
+    </script>
+</body>
+</html>
