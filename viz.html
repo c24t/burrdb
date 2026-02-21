@@ -376,7 +376,7 @@
         /** Creates an empty 6x2x2 boolean grid (all false) */
         function createEmptyGrid() {
             const g = [];
-            for(let x=0;x<6;x++){ g[x]=[]; for(let y=0;y<2;y++){ g[x][y]=[]; for(let z=0;z<2;z++) g[x][y][z]=false; } }
+            for(let x=0;x<CONFIG.grid.length;x++){ g[x]=[]; for(let y=0;y<CONFIG.grid.width;y++){ g[x][y]=[]; for(let z=0;z<CONFIG.grid.height;z++) g[x][y][z]=false; } }
             return g;
         }
 
@@ -633,6 +633,7 @@
             depthWrite: false
         });
         const wireEdgeColor = CONFIG.colors.wireframe;
+        const wireLineMat = new THREE.LineBasicMaterial({ color: wireEdgeColor });
 
         let pieceGroup = new THREE.Group();
         scene.add(pieceGroup);
@@ -643,6 +644,14 @@
          */
         function generateShellGeometry(grid) {
             const geometries = [];
+            const neighbors = [
+                { dx: 1, dy: 0, dz: 0, face: 'right', rx: 0, ry: -Math.PI/2, rz: 0, ox: -0.5, oy: 0, oz: 0 },
+                { dx: -1, dy: 0, dz: 0, face: 'left', rx: 0, ry: Math.PI/2, rz: 0, ox: 0.5, oy: 0, oz: 0 },
+                { dx: 0, dy: 1, dz: 0, face: 'top', rx: -Math.PI/2, ry: 0, rz: 0, ox: 0, oy: 0.5, oz: 0 },
+                { dx: 0, dy: -1, dz: 0, face: 'bottom', rx: Math.PI/2, ry: 0, rz: 0, ox: 0, oy: -0.5, oz: 0 },
+                { dx: 0, dy: 0, dz: 1, face: 'front', rx: 0, ry: 0, rz: 0, ox: 0, oy: 0, oz: 0.5 },
+                { dx: 0, dy: 0, dz: -1, face: 'back', rx: 0, ry: Math.PI, rz: 0, ox: 0, oy: 0, oz: -0.5 }
+            ];
             for (let x = 0; x < 6; x++) {
                 for (let y = 0; y < 2; y++) {
                     for (let z = 0; z < 2; z++) {
@@ -651,15 +660,6 @@
                         const px = -(x - 2.5); // X-Flip for visualization
                         const py = (y - 0.5);
                         const pz = (z - 0.5);
-
-                        const neighbors = [
-                            { dx: 1, dy: 0, dz: 0, face: 'right', rx: 0, ry: -Math.PI/2, rz: 0, ox: -0.5, oy: 0, oz: 0 },
-                            { dx: -1, dy: 0, dz: 0, face: 'left', rx: 0, ry: Math.PI/2, rz: 0, ox: 0.5, oy: 0, oz: 0 },
-                            { dx: 0, dy: 1, dz: 0, face: 'top', rx: -Math.PI/2, ry: 0, rz: 0, ox: 0, oy: 0.5, oz: 0 },
-                            { dx: 0, dy: -1, dz: 0, face: 'bottom', rx: Math.PI/2, ry: 0, rz: 0, ox: 0, oy: -0.5, oz: 0 },
-                            { dx: 0, dy: 0, dz: 1, face: 'front', rx: 0, ry: 0, rz: 0, ox: 0, oy: 0, oz: 0.5 },
-                            { dx: 0, dy: 0, dz: -1, face: 'back', rx: 0, ry: Math.PI, rz: 0, ox: 0, oy: 0, oz: -0.5 }
-                        ];
 
                         neighbors.forEach(n => {
                             const nx = x + n.dx, ny = y + n.dy, nz = z + n.dz;
@@ -684,11 +684,13 @@
         /** Updates the 3D Scene based on current ID and View Mode */
         function updateMainView(val) {
             // Clear current objects
+            const geosToDispose = new Set();
             while(pieceGroup.children.length > 0){
                 const obj = pieceGroup.children[0];
-                if (obj.geometry) obj.geometry.dispose();
+                if (obj.geometry) geosToDispose.add(obj.geometry);
                 pieceGroup.remove(obj);
             }
+            geosToDispose.forEach(g => g.dispose());
 
             const grid = idToVoxelGrid(val);
             const size = 1;
@@ -721,7 +723,7 @@
                 const shellGeo = generateShellGeometry(grid);
                 const mesh = new THREE.Mesh(shellGeo, wireFaceMat);
                 const edges = new THREE.EdgesGeometry(shellGeo);
-                const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: wireEdgeColor }));
+                const line = new THREE.LineSegments(edges, wireLineMat);
                 pieceGroup.add(mesh);
                 pieceGroup.add(line);
             }
@@ -729,13 +731,12 @@
                 // Mode 3: Wireframe Cubes
                 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
                 const edgesGeo = new THREE.EdgesGeometry(boxGeo);
-                const edgesMat = new THREE.LineBasicMaterial({ color: wireEdgeColor });
                 for(let x=0; x<6; x++) for(let y=0; y<2; y++) for(let z=0; z<2; z++) {
                     if (grid[x][y][z]) {
                         const pos = new THREE.Vector3(-(x - 2.5), y - 0.5, z - 0.5);
                         const mesh = new THREE.Mesh(boxGeo, wireFaceMat);
                         mesh.position.copy(pos);
-                        const line = new THREE.LineSegments(edgesGeo, edgesMat);
+                        const line = new THREE.LineSegments(edgesGeo, wireLineMat);
                         line.position.copy(pos);
                         pieceGroup.add(mesh);
                         pieceGroup.add(line);
@@ -898,18 +899,10 @@
         });
 
         // Animation Loop
-        const azEl = document.getElementById('val-azimuth');
-        const polEl = document.getElementById('val-polar');
-
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
             renderer.render(scene, camera);
-
-            if (azEl && polEl) {
-                azEl.textContent = (controls.getAzimuthalAngle() * (180 / Math.PI)).toFixed(1);
-                polEl.textContent = (controls.getPolarAngle() * (180 / Math.PI)).toFixed(1);
-            }
         }
 
         // Boot
