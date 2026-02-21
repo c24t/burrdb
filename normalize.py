@@ -234,7 +234,8 @@ def main():
         if args.verbose:
             print(f"  Total cubies removed: {removed} (minimum {MIN_REMOVED_CUBIES})", file=sys.stderr)
 
-    print(" ".join(str(pid) for pid in result))
+    print("pieces: " + " ".join(str(pid) for pid in result))
+    print("puzzle: 0x" + "".join(format(pid, '03x') for pid in result))
 
 
 if __name__ == "__main__":
