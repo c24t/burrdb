@@ -12,8 +12,11 @@ Piece IDs can be decimal, hex (0x prefix), or binary (0b prefix).
 Usage:
     python normalize.py 65 1 256 154 888 35
     python normalize.py 0x41 0b1 0x100 154 0x378 35
+    python normalize.py -v 65 1 256 154 888 35
+    python normalize.py -s 1 1 1 1 1 1
 """
 
+import argparse
 import sys
 
 # Bit index -> (x, y, z) coordinate in the 6x2x2 grid.
@@ -33,6 +36,10 @@ FIXED_POSITIONS = [
     for x in range(6) for y in range(2) for z in range(2)
     if (x, y, z) not in _BIT_MAP_SET
 ]
+
+# The assembled burr interior has 32 cubie positions.
+# 6 pieces x 12 removable cubies = 72 total, so at least 40 must be removed.
+MIN_REMOVED_CUBIES = 40
 
 
 def id_to_grid(piece_id: int) -> list[list[list[bool]]]:
@@ -137,7 +144,18 @@ def canonical_id(piece_id: int) -> int:
     return min_id
 
 
-def normalize(piece_ids: list[int]) -> list[int]:
+def piece_weight(piece_id: int) -> int:
+    """Count the removable cubies that are present (not removed)."""
+    bitmap = piece_id - 1
+    return 12 - bin(bitmap).count("1")
+
+
+def total_removed(piece_ids: list[int]) -> int:
+    """Count total removed cubies across all pieces."""
+    return sum(12 - piece_weight(pid) for pid in piece_ids)
+
+
+def normalize(piece_ids: list[int], verbose: bool = False) -> list[int]:
     """Validate and normalize a list of 6 piece IDs."""
     if len(piece_ids) != 6:
         raise ValueError(f"Expected 6 pieces, got {len(piece_ids)}")
@@ -148,7 +166,20 @@ def normalize(piece_ids: list[int]) -> list[int]:
         if not is_connected(pid):
             raise ValueError(f"Piece {pid} is disconnected")
 
-    return sorted(canonical_id(pid) for pid in piece_ids)
+    # Replace with canonical IDs
+    canonical = []
+    for pid in piece_ids:
+        cid = canonical_id(pid)
+        if verbose and cid != pid:
+            print(f"  Piece {pid} -> {cid} (rotational equivalent)", file=sys.stderr)
+        canonical.append(cid)
+
+    # Sort ascending
+    result = sorted(canonical)
+    if verbose and result != canonical:
+        print(f"  Sorted: {' '.join(str(p) for p in canonical)} -> {' '.join(str(p) for p in result)}", file=sys.stderr)
+
+    return result
 
 
 def parse_piece_id(s: str) -> int:
@@ -161,21 +192,47 @@ def parse_piece_id(s: str) -> int:
 
 
 def main():
-    if len(sys.argv) != 7:
-        print(f"Usage: {sys.argv[0]} <id1> <id2> <id3> <id4> <id5> <id6>", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Normalize a 6-piece burr puzzle description."
+    )
+    parser.add_argument(
+        "pieces", nargs="+", metavar="ID",
+        help="Piece IDs (decimal, 0x hex, or 0b binary)"
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Log each normalization step"
+    )
+    parser.add_argument(
+        "-s", "--strict", action="store_true",
+        help="Error if too few cubies removed to be assemblable (need >= 40)"
+    )
+    args = parser.parse_args()
 
     try:
-        piece_ids = [parse_piece_id(arg) for arg in sys.argv[1:]]
+        piece_ids = [parse_piece_id(s) for s in args.pieces]
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     try:
-        result = normalize(piece_ids)
+        result = normalize(piece_ids, verbose=args.verbose)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    if args.strict:
+        removed = total_removed(result)
+        if removed < MIN_REMOVED_CUBIES:
+            print(
+                f"Error: Only {removed} cubies removed across all pieces, "
+                f"need at least {MIN_REMOVED_CUBIES} for assembly "
+                f"(interior has 32 positions for 72 removable cubies)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if args.verbose:
+            print(f"  Total cubies removed: {removed} (minimum {MIN_REMOVED_CUBIES})", file=sys.stderr)
 
     print(" ".join(str(pid) for pid in result))
 
