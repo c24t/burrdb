@@ -3,38 +3,210 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bill's Baffling Burr — Disassembly Animation</title>
+    <title>Burr Puzzle Animator</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; }
+        :root {
+            --bg-color: #1a1a1a;
+            --panel-bg: rgba(0, 0, 0, 0.9);
+            --text-color: #ddd;
+            --accent-color: #007bff;
+            --border-color: #444;
+        }
+
+        body { margin: 0; overflow: hidden; background: var(--bg-color); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: white; }
         canvas { display: block; }
-        #info {
+
+        /* ── Sidebar Panel ── */
+        #sidebar {
             position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: rgba(255,255,255,0.6);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            text-align: center;
-            pointer-events: none;
-            user-select: none;
+            top: 20px;
+            left: 20px;
+            background: var(--panel-bg);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            width: 300px;
+            border: 1px solid var(--border-color);
+            pointer-events: auto;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
         }
-        #title {
+
+        h1 { font-size: 16px; margin: 0 0 15px 0; color: var(--text-color); text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+
+        .control-group { margin-bottom: 12px; }
+        label { display: block; margin-bottom: 4px; font-size: 12px; color: #aaa; }
+
+        /* ── Input ── */
+        .input-row {
+            display: flex;
+            gap: 6px;
+        }
+        .input-row input {
+            flex: 1;
+            border: 1px solid var(--border-color);
+            background: #2a2a2a;
+            padding: 8px 10px;
+            color: #fff;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        .input-row input:focus { outline: none; border-color: var(--accent-color); background: #333; }
+
+        /* ── Buttons ── */
+        .btn {
+            padding: 8px 14px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: #2a2a2a;
+            color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: inherit;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .btn:hover { background: #3a3a3a; border-color: #666; }
+        .btn:active { background: #444; }
+        .btn-primary { background: var(--accent-color); border-color: var(--accent-color); }
+        .btn-primary:hover { background: #0069d9; }
+        .btn:disabled { opacity: 0.4; cursor: default; }
+
+        /* ── Dropdown ── */
+        select {
+            width: 100%;
+            padding: 8px 10px;
+            background: #2a2a2a;
+            border: 1px solid var(--border-color);
+            color: #fff;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', sans-serif;
+            cursor: pointer;
+        }
+        select:focus { outline: none; border-color: var(--accent-color); background: #333; }
+
+        /* ── Playback Controls ── */
+        .playback-row {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .playback-row .btn {
             font-size: 16px;
-            font-weight: 600;
-            letter-spacing: 1px;
-            margin: 0;
+            padding: 6px 12px;
+            min-width: 40px;
+            text-align: center;
         }
-        #subtitle {
-            font-size: 11px;
-            color: rgba(255,255,255,0.35);
-            margin: 4px 0 0;
+        .step-label {
+            font-size: 12px;
+            color: #888;
+            margin-left: auto;
+            white-space: nowrap;
         }
+
+        /* ── Checkbox ── */
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #ccc;
+            cursor: pointer;
+        }
+        .checkbox-row input { cursor: pointer; accent-color: var(--accent-color); width: 15px; height: 15px; }
+
+        /* ── Info Section ── */
+        .info-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #333;
+        }
+        .info { font-size: 12px; color: #888; line-height: 1.6; }
+        .info strong { color: #aaa; }
+
+        /* ── Status ── */
+        #status {
+            font-size: 12px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            margin-top: 8px;
+            display: none;
+        }
+        #status.error { display: block; background: #4a1a1a; border: 1px solid #ff4444; color: #ffcccc; }
+        #status.solving { display: block; background: #1a3a4a; border: 1px solid #4488aa; color: #aaddff; }
+        #status.info { display: block; background: #1a3a1a; border: 1px solid #44aa44; color: #aaffaa; }
+
+        .hint { font-size: 11px; color: #666; margin-top: 3px; }
+
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
-    <div id="info">
-        <p id="title">Bill's Baffling Burr</p>
-        <p id="subtitle">Level 5 &middot; 24 assemblies, 1 unique solution</p>
+    <div id="sidebar">
+        <h1>Burr Puzzle Animator</h1>
+
+        <div class="control-group">
+            <label for="preset-select">Preset Puzzle</label>
+            <select id="preset-select">
+                <option value="">— Custom —</option>
+                <option value="412 480 512 704 704 960">Artifactory 5/4</option>
+                <option value="52 615 792 960 992 975">Baffling Burr Puzzle</option>
+                <option value="103 760 960 992 996 1024">Bill's Baffling Burr</option>
+                <option value="1 256 256 256 928 928">Chinese Cross</option>
+                <option value="624 702 768 883 1015 1024">Computer's Choice Unique 10</option>
+                <option value="1 154 256 256 1024 1024">Double Cross</option>
+                <option value="52 792 911 824 975 1024">Hoffmann Block</option>
+                <option value="1 188 256 960 975 1024">Hoffmann Burr</option>
+                <option value="88 512 704 960 992 1008">Love's Dozen</option>
+                <option value="120 160 256 512 880 960">Philippe Dubois</option>
+                <option value="88 512 768 922 1008 1008">Piston Burr</option>
+                <option value="1 256 824 975 928 1024">Six-Way Set</option>
+                <option value="463 564 760 909 927 1016">Tenyo Brother</option>
+                <option value="1 188 824 975 1024 1024">Triple Trouble</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="pieces-input">Piece IDs</label>
+            <div class="input-row">
+                <input id="pieces-input" type="text" placeholder="103 760 960 992 996 1024" spellcheck="false" autocomplete="off">
+                <button id="solve-btn" class="btn btn-primary">Solve</button>
+            </div>
+            <div class="hint">6 piece IDs (decimal, 0x hex, or puzzle ID)</div>
+        </div>
+
+        <div id="solution-group" class="control-group hidden">
+            <label for="solution-select">Solution</label>
+            <select id="solution-select"></select>
+        </div>
+
+        <div id="playback-group" class="control-group hidden">
+            <label>Playback</label>
+            <div class="playback-row">
+                <button id="btn-prev" class="btn" title="Previous step (Left arrow)">&laquo;</button>
+                <button id="btn-play" class="btn" title="Play / Pause (Space)">&#9654;</button>
+                <button id="btn-next" class="btn" title="Next step (Right arrow)">&raquo;</button>
+                <span id="step-label" class="step-label"></span>
+            </div>
+        </div>
+
+        <div id="options-group" class="control-group hidden">
+            <label class="checkbox-row">
+                <input id="auto-rotate" type="checkbox" checked>
+                Auto-rotate camera
+            </label>
+        </div>
+
+        <div id="info-section" class="info-section hidden">
+            <div class="info" id="puzzle-info"></div>
+        </div>
+
+        <div id="status"></div>
     </div>
 
     <script type="importmap">{
@@ -50,89 +222,54 @@
     import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
     // ================================================================
-    // PUZZLE DATA — Bill's Baffling Burr
-    // Pieces 103, 760, 960, 992, 996, 1024
-    // Solution extracted from BurrTools burrTxt2 with -d flag
+    // CONSTANTS
     // ================================================================
 
-    const PIECE_IDS  = [103, 760, 960, 992, 996, 1024];
-    const TRANSFORMS = [0, 5, 19, 8, 23, 15];
-
-    // Distinct, colorblind-friendly palette
-    const COLORS = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x42d4f4, 0xf032e6];
-
-    // BurrTools 24 rotation matrices (row-major 3x3: m00 m01 m02 m10 m11 m12 m20 m21 m22)
-    // From src/lib/tabs_0/rotmatrix.inc — first 24 are pure rotations
+    // BurrTools 24 rotation matrices (row-major 3x3)
     const ROT = [
-        [ 1, 0, 0,  0, 1, 0,  0, 0, 1],  //  0
-        [ 1, 0, 0,  0, 0,-1,  0, 1, 0],  //  1
-        [ 1, 0, 0,  0,-1, 0,  0, 0,-1],  //  2
-        [ 1, 0, 0,  0, 0, 1,  0,-1, 0],  //  3
-        [ 0, 0,-1,  0, 1, 0,  1, 0, 0],  //  4
-        [ 0,-1, 0,  0, 0,-1,  1, 0, 0],  //  5
-        [ 0, 0, 1,  0,-1, 0,  1, 0, 0],  //  6
-        [ 0, 1, 0,  0, 0, 1,  1, 0, 0],  //  7
-        [-1, 0, 0,  0, 1, 0,  0, 0,-1],  //  8
-        [-1, 0, 0,  0, 0,-1,  0,-1, 0],  //  9
-        [-1, 0, 0,  0,-1, 0,  0, 0, 1],  // 10
-        [-1, 0, 0,  0, 0, 1,  0, 1, 0],  // 11
-        [ 0, 0, 1,  0, 1, 0, -1, 0, 0],  // 12
-        [ 0, 1, 0,  0, 0,-1, -1, 0, 0],  // 13
-        [ 0, 0,-1,  0,-1, 0, -1, 0, 0],  // 14
-        [ 0,-1, 0,  0, 0, 1, -1, 0, 0],  // 15
-        [ 0,-1, 0,  1, 0, 0,  0, 0, 1],  // 16
-        [ 0, 0, 1,  1, 0, 0,  0, 1, 0],  // 17
-        [ 0, 1, 0,  1, 0, 0,  0, 0,-1],  // 18
-        [ 0, 0,-1,  1, 0, 0,  0,-1, 0],  // 19
-        [ 0, 1, 0, -1, 0, 0,  0, 0, 1],  // 20
-        [ 0, 0,-1, -1, 0, 0,  0, 1, 0],  // 21
-        [ 0,-1, 0, -1, 0, 0,  0, 0,-1],  // 22
-        [ 0, 0, 1, -1, 0, 0,  0,-1, 0],  // 23
+        [ 1, 0, 0,  0, 1, 0,  0, 0, 1],
+        [ 1, 0, 0,  0, 0,-1,  0, 1, 0],
+        [ 1, 0, 0,  0,-1, 0,  0, 0,-1],
+        [ 1, 0, 0,  0, 0, 1,  0,-1, 0],
+        [ 0, 0,-1,  0, 1, 0,  1, 0, 0],
+        [ 0,-1, 0,  0, 0,-1,  1, 0, 0],
+        [ 0, 0, 1,  0,-1, 0,  1, 0, 0],
+        [ 0, 1, 0,  0, 0, 1,  1, 0, 0],
+        [-1, 0, 0,  0, 1, 0,  0, 0,-1],
+        [-1, 0, 0,  0, 0,-1,  0,-1, 0],
+        [-1, 0, 0,  0,-1, 0,  0, 0, 1],
+        [-1, 0, 0,  0, 0, 1,  0, 1, 0],
+        [ 0, 0, 1,  0, 1, 0, -1, 0, 0],
+        [ 0, 1, 0,  0, 0,-1, -1, 0, 0],
+        [ 0, 0,-1,  0,-1, 0, -1, 0, 0],
+        [ 0,-1, 0,  0, 0, 1, -1, 0, 0],
+        [ 0,-1, 0,  1, 0, 0,  0, 0, 1],
+        [ 0, 0, 1,  1, 0, 0,  0, 1, 0],
+        [ 0, 1, 0,  1, 0, 0,  0, 0,-1],
+        [ 0, 0,-1,  1, 0, 0,  0,-1, 0],
+        [ 0, 1, 0, -1, 0, 0,  0, 0, 1],
+        [ 0, 0,-1, -1, 0, 0,  0, 1, 0],
+        [ 0,-1, 0, -1, 0, 0,  0, 0,-1],
+        [ 0, 0, 1, -1, 0, 0,  0,-1, 0],
     ];
 
     // Bit index -> (x, y, z) in the 6x2x2 piece grid.  Bit set = cubie removed.
     const BIT_MAP = [
-        [1,1,1],[2,1,1],[3,1,1],[4,1,1],   // bits 0-3  Top Back
-        [1,0,1],[2,0,1],[3,0,1],[4,0,1],   // bits 4-7  Top Front
-        [2,1,0],[3,1,0],                    // bits 8-9  Bottom Back
-        [2,0,0],[3,0,0],                    // bits 10-11 Bottom Front
+        [1,1,1],[2,1,1],[3,1,1],[4,1,1],
+        [1,0,1],[2,0,1],[3,0,1],[4,0,1],
+        [2,1,0],[3,1,0],
+        [2,0,0],[3,0,0],
     ];
 
-    // Disassembly keyframes — 10 states, 9 transitions
-    // Each state: 6 piece positions [x, y, z] in the 6x6x6 assembly grid
-    //
-    // Root separation (Level 5 — 5 coordinated moves to free piece 5):
-    //   KF0→1 : piece 0 slides x−1
-    //   KF1→2 : piece 4 slides y+1
-    //   KF2→3 : piece 1 slides z−1
-    //   KF3→4 : piece 4 slides y+1
-    //   KF4→5 : piece 5 exits −x (slides 6 units out)
-    // Then 4 single-piece exits:
-    //   KF5→6 : piece 3 exits +z
-    //   KF6→7 : piece 2 exits +x
-    //   KF7→8 : piece 1 exits +x
-    //   KF8→9 : piece 0 exits +y
-    const KEYFRAMES = [
-        [[ 0,2, 1],[ 3,4, 0],[ 4,0, 3],[ 5,2, 4],[ 1,5,3],[ 3,1, 5]],  // KF0  assembled
-        [[-1,2, 1],[ 3,4, 0],[ 4,0, 3],[ 5,2, 4],[ 1,5,3],[ 3,1, 5]],  // KF1
-        [[-1,2, 1],[ 3,4, 0],[ 4,0, 3],[ 5,2, 4],[ 1,6,3],[ 3,1, 5]],  // KF2
-        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2, 4],[ 1,6,3],[ 3,1, 5]],  // KF3
-        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2, 4],[ 1,7,3],[ 3,1, 5]],  // KF4
-        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2, 4],[ 1,7,3],[-3,1, 5]],  // KF5  piece 5 out
-        [[-1,2, 1],[ 3,4,-1],[ 4,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF6  piece 3 out
-        [[-1,2, 1],[ 3,4,-1],[10,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF7  piece 2 out
-        [[-1,2, 1],[ 9,4,-1],[10,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF8  piece 1 out
-        [[-1,8, 1],[ 9,4,-1],[10,0, 3],[ 5,2,10],[ 1,7,3],[-3,1, 5]],  // KF9  piece 0 out
-    ];
+    // Distinct, colorblind-friendly palette (6 colors)
+    const COLORS = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x42d4f4, 0xf032e6];
 
     // ================================================================
     // PIECE VOXEL GENERATION
     // ================================================================
 
-    /** Convert piece ID (1-4096) to list of solid voxel [x,y,z] coords in 6x2x2 grid */
     function getPieceVoxels(pieceId) {
         const bitmap = pieceId - 1;
-        // Build lookup: "x,y,z" → bit index  (only for the 12 removable positions)
         const removable = new Map();
         BIT_MAP.forEach((pos, idx) => removable.set(`${pos[0]},${pos[1]},${pos[2]}`, idx));
 
@@ -142,17 +279,14 @@
                 for (let x = 0; x < 6; x++) {
                     const bitIdx = removable.get(`${x},${y},${z}`);
                     if (bitIdx !== undefined) {
-                        // Removable position: solid unless corresponding bit is set
                         if (!((bitmap >> bitIdx) & 1)) voxels.push([x, y, z]);
                     } else {
-                        // Fixed position: always solid
                         voxels.push([x, y, z]);
                     }
                 }
         return voxels;
     }
 
-    /** Apply rotation matrix M to point (x,y,z), return [x',y',z'] */
     function applyRot(M, x, y, z) {
         return [
             M[0]*x + M[1]*y + M[2]*z,
@@ -169,7 +303,7 @@
     scene.background = new THREE.Color(0x1a1a1a);
 
     const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 200);
-    camera.up.set(0, 0, 1);     // Z-up convention
+    camera.up.set(0, 0, 1);
     camera.position.set(14, 14, 11);
     scene.add(camera);
 
@@ -184,7 +318,6 @@
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.5;
 
-    // Lighting: hemisphere ambient + camera-attached key/fill
     scene.add(new THREE.HemisphereLight(0xddeeff, 0x222222, 0.8));
 
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -195,117 +328,334 @@
     fillLight.position.set(-8, -3, 4);
     camera.add(fillLight);
 
-    // ================================================================
-    // BUILD PIECE MESHES
-    // ================================================================
-
-    // Center offset: the 6x6x6 grid spans [0,5] in each axis, center at 2.5
     const CX = 2.5, CY = 2.5, CZ = 2.5;
-
-    // Shared geometry for individual cubies
     const cubieGeom = new RoundedBoxGeometry(0.94, 0.94, 0.94, 2, 0.06);
 
-    const pieceGroups = [];
+    // ================================================================
+    // DYNAMIC PUZZLE STATE
+    // ================================================================
 
-    for (let i = 0; i < 6; i++) {
-        const group = new THREE.Group();
-        const mat = new THREE.MeshStandardMaterial({
-            color: COLORS[i],
-            roughness: 0.5,
-            metalness: 0.12,
-        });
+    let puzzleData   = null;   // Full API response
+    let currentSolIdx = 0;     // Index into solutions array
+    let pieceGroups  = [];     // THREE.Group per piece
+    let keyframes    = [];     // Current solution's keyframes
+    let numSteps     = 0;      // keyframes.length - 1
 
-        // Get solid voxels and apply the piece's rotation transform
-        const voxels = getPieceVoxels(PIECE_IDS[i]);
-        const M = ROT[TRANSFORMS[i]];
+    // Animation state
+    const MOVE_SPEED = 1.8;
+    const PAUSE_SECS = 2.0;
+    const STEP_SPEED = 10.0;   // speed for manual step-to animation
 
-        for (const [lx, ly, lz] of voxels) {
-            // Rotate local voxel to assembly orientation
-            // Global voxel position = placement + M * local
-            // Within the group, store the rotated-local offset;
-            // the group.position provides the placement offset.
-            const [rx, ry, rz] = applyRot(M, lx, ly, lz);
-            const mesh = new THREE.Mesh(cubieGeom, mat);
-            mesh.position.set(rx, ry, rz);
-            group.add(mesh);
+    let t            = 0;      // continuous progress in [0, numSteps]
+    let dir          = 1;      // +1 disassemble, -1 assemble
+    let playing      = false;  // yo-yo animation running?
+    let yoyoPaused   = false;  // endpoint pause in yo-yo mode
+    let yoyoPauseTime = 0;
+    let targetStep   = null;   // non-null when stepping to a specific keyframe
+
+    function ease(x) { return x * x * (3 - 2 * x); }
+
+    // ================================================================
+    // UI ELEMENTS
+    // ================================================================
+
+    const presetSelect  = document.getElementById('preset-select');
+    const piecesInput   = document.getElementById('pieces-input');
+    const solveBtn      = document.getElementById('solve-btn');
+    const solutionGroup = document.getElementById('solution-group');
+    const solutionSelect = document.getElementById('solution-select');
+    const playbackGroup = document.getElementById('playback-group');
+    const btnPrev       = document.getElementById('btn-prev');
+    const btnPlay       = document.getElementById('btn-play');
+    const btnNext       = document.getElementById('btn-next');
+    const stepLabel     = document.getElementById('step-label');
+    const optionsGroup  = document.getElementById('options-group');
+    const autoRotateCb  = document.getElementById('auto-rotate');
+    const infoSection   = document.getElementById('info-section');
+    const puzzleInfo    = document.getElementById('puzzle-info');
+    const statusEl      = document.getElementById('status');
+
+    // ================================================================
+    // LOAD PUZZLE FROM API
+    // ================================================================
+
+    function syncPresetDropdown(inputStr) {
+        // Normalize to compare: sort-independent match on trimmed values
+        const norm = inputStr.trim().replace(/\s+/g, ' ');
+        const match = [...presetSelect.options].find(o => o.value === norm);
+        presetSelect.value = match ? match.value : '';
+    }
+
+    async function loadPuzzle(inputStr) {
+        syncPresetDropdown(inputStr);
+        setStatus('Solving...', 'solving');
+        solveBtn.disabled = true;
+
+        try {
+            const resp = await fetch('/api/solve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pieces: inputStr }),
+            });
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                setStatus(data.error || 'Server error', 'error');
+                return;
+            }
+
+            if (data.solutions.length === 0) {
+                puzzleData = data;
+                clearScene();
+                setStatus(
+                    data.numAssemblies > 0
+                        ? `${data.numAssemblies} assemblies found but none can be disassembled`
+                        : 'No valid assemblies found',
+                    'error'
+                );
+                showPuzzleInfo();
+                playbackGroup.classList.add('hidden');
+                solutionGroup.classList.add('hidden');
+                optionsGroup.classList.add('hidden');
+                return;
+            }
+
+            puzzleData = data;
+            updateSolutionDropdown();
+            loadSolution(0);
+            setStatus('', 'hidden');
+        } catch (err) {
+            setStatus(`Network error: ${err.message}`, 'error');
+        } finally {
+            solveBtn.disabled = false;
+        }
+    }
+
+    function updateSolutionDropdown() {
+        const sols = puzzleData.solutions;
+        solutionSelect.innerHTML = '';
+        for (let i = 0; i < sols.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = `Solution ${i + 1} of ${sols.length}  —  Level ${sols[i].level}`;
+            solutionSelect.appendChild(opt);
+        }
+        if (sols.length > 1) {
+            solutionGroup.classList.remove('hidden');
+        } else {
+            solutionGroup.classList.add('hidden');
+        }
+    }
+
+    function loadSolution(index) {
+        currentSolIdx = index;
+        const sol = puzzleData.solutions[index];
+
+        keyframes = sol.keyframes;
+        numSteps = keyframes.length - 1;
+
+        // Reset animation
+        t = 0;
+        dir = 1;
+        playing = true;
+        yoyoPaused = true;
+        yoyoPauseTime = 0;
+        targetStep = null;
+        updatePlayButton();
+
+        // Rebuild piece meshes
+        clearScene();
+        pieceGroups = [];
+
+        for (let i = 0; i < 6; i++) {
+            const group = new THREE.Group();
+            const mat = new THREE.MeshStandardMaterial({
+                color: COLORS[i],
+                roughness: 0.5,
+                metalness: 0.12,
+            });
+
+            const voxels = getPieceVoxels(sol.pieceIds[i]);
+            const M = ROT[sol.transforms[i]];
+
+            for (const [lx, ly, lz] of voxels) {
+                const [rx, ry, rz] = applyRot(M, lx, ly, lz);
+                const mesh = new THREE.Mesh(cubieGeom, mat);
+                mesh.position.set(rx, ry, rz);
+                group.add(mesh);
+            }
+
+            const [px, py, pz] = keyframes[0][i];
+            group.position.set(px - CX, py - CY, pz - CZ);
+
+            scene.add(group);
+            pieceGroups.push(group);
         }
 
-        // Initial position: KF0 (assembled), centered
-        const [px, py, pz] = KEYFRAMES[0][i];
-        group.position.set(px - CX, py - CY, pz - CZ);
+        // Show controls
+        playbackGroup.classList.remove('hidden');
+        optionsGroup.classList.remove('hidden');
+        infoSection.classList.remove('hidden');
+        showPuzzleInfo();
+        updateStepLabel();
+    }
 
-        scene.add(group);
-        pieceGroups.push(group);
+    function clearScene() {
+        for (const g of pieceGroups) {
+            scene.remove(g);
+            g.traverse(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+            });
+        }
+        pieceGroups = [];
+    }
+
+    // ================================================================
+    // PLAYBACK CONTROLS
+    // ================================================================
+
+    function togglePlayPause() {
+        if (numSteps === 0) return;
+        playing = !playing;
+        if (playing) {
+            targetStep = null;
+            // If at an endpoint, start moving
+            if (t >= numSteps) dir = -1;
+            else if (t <= 0) dir = 1;
+            yoyoPaused = false;
+        }
+        updatePlayButton();
+    }
+
+    function updatePlayButton() {
+        btnPlay.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
+        btnPlay.title = playing ? 'Pause (Space)' : 'Play (Space)';
+    }
+
+    function stepTo(step) {
+        if (numSteps === 0) return;
+        step = Math.max(0, Math.min(numSteps, step));
+        playing = false;
+        targetStep = step;
+        updatePlayButton();
+    }
+
+    function currentStep() {
+        return Math.round(t);
+    }
+
+    function updateStepLabel() {
+        if (numSteps === 0) {
+            stepLabel.textContent = '';
+            return;
+        }
+        stepLabel.textContent = `Step ${currentStep()} / ${numSteps}`;
+    }
+
+    // ================================================================
+    // UI INFO & STATUS
+    // ================================================================
+
+    function setStatus(msg, type) {
+        if (!msg || type === 'hidden') {
+            statusEl.style.display = 'none';
+            statusEl.className = '';
+            return;
+        }
+        statusEl.textContent = msg;
+        statusEl.className = type;
+        statusEl.style.display = 'block';
+    }
+
+    function showPuzzleInfo() {
+        if (!puzzleData) return;
+        const sol = puzzleData.solutions[currentSolIdx];
+        const lines = [];
+        if (sol) {
+            lines.push(`<strong>Level:</strong> ${sol.level}`);
+        }
+        lines.push(`<strong>Assemblies:</strong> ${puzzleData.numAssemblies}`);
+        const totalSol = puzzleData.numSolutions;
+        const availSol = puzzleData.solutions.length;
+        if (totalSol > availSol) {
+            lines.push(`<strong>Solutions:</strong> ${availSol} shown of ${totalSol}`);
+        } else {
+            lines.push(`<strong>Solutions:</strong> ${totalSol}`);
+        }
+        lines.push(`<strong>Pieces:</strong> ${puzzleData.pieces.join(', ')}`);
+        puzzleInfo.innerHTML = lines.join('<br>');
     }
 
     // ================================================================
     // ANIMATION ENGINE
     // ================================================================
 
-    const MOVE_SPEED  = 1.8;    // keyframe transitions per second
-    const PAUSE_SECS  = 2.0;    // seconds to hold at each end
-    const N_STEPS     = KEYFRAMES.length - 1;  // 9 transitions
-
-    let t         = 0;     // continuous progress in [0, N_STEPS]
-    let dir       = 1;     // +1 disassemble, -1 assemble
-    let paused    = true;  // start with a pause at assembled state
-    let pauseTime = 0;
-
-    /** Hermite smoothstep for pleasant easing */
-    function ease(x) { return x * x * (3 - 2 * x); }
-
     function tick(dt) {
-        // Handle pause at endpoints
-        if (paused) {
-            pauseTime += dt;
-            if (pauseTime >= PAUSE_SECS) {
-                paused = false;
-                pauseTime = 0;
+        if (numSteps === 0 || pieceGroups.length === 0) return;
+
+        if (playing) {
+            // Yo-yo mode
+            if (yoyoPaused) {
+                yoyoPauseTime += dt;
+                if (yoyoPauseTime >= PAUSE_SECS) {
+                    yoyoPaused = false;
+                    yoyoPauseTime = 0;
+                }
+            } else {
+                t += dir * dt * MOVE_SPEED;
+                if (t >= numSteps) {
+                    t = numSteps;
+                    dir = -1;
+                    yoyoPaused = true;
+                    yoyoPauseTime = 0;
+                } else if (t <= 0) {
+                    t = 0;
+                    dir = 1;
+                    yoyoPaused = true;
+                    yoyoPauseTime = 0;
+                }
             }
-            return;
+        } else if (targetStep !== null) {
+            // Manual step-to animation
+            const diff = targetStep - t;
+            if (Math.abs(diff) < 0.01) {
+                t = targetStep;
+                targetStep = null;
+            } else {
+                const stepDir = diff > 0 ? 1 : -1;
+                t += stepDir * dt * STEP_SPEED;
+                // Don't overshoot
+                if ((stepDir > 0 && t > targetStep) || (stepDir < 0 && t < targetStep)) {
+                    t = targetStep;
+                    targetStep = null;
+                }
+            }
         }
 
-        // Advance animation time
-        t += dir * dt * MOVE_SPEED;
-
-        // Clamp and trigger pause + direction flip at endpoints
-        if (t >= N_STEPS) {
-            t = N_STEPS;
-            dir = -1;
-            paused = true;
-            pauseTime = 0;
-        } else if (t <= 0) {
-            t = 0;
-            dir = 1;
-            paused = true;
-            pauseTime = 0;
-        }
-
-        // Determine which two keyframes we're interpolating between
-        const kf   = Math.min(Math.floor(t), N_STEPS - 1);
+        // Interpolate piece positions
+        const kf   = Math.min(Math.floor(t), numSteps - 1);
         const frac = ease(Math.max(0, Math.min(1, t - kf)));
 
-        // Lerp each piece's position
         for (let i = 0; i < 6; i++) {
-            const a = KEYFRAMES[kf][i];
-            const b = KEYFRAMES[kf + 1][i];
+            const a = keyframes[kf][i];
+            const b = keyframes[kf + 1][i];
             pieceGroups[i].position.set(
                 a[0] + (b[0] - a[0]) * frac - CX,
                 a[1] + (b[1] - a[1]) * frac - CY,
                 a[2] + (b[2] - a[2]) * frac - CZ,
             );
         }
+
+        updateStepLabel();
     }
 
     // ================================================================
     // RENDER LOOP
     // ================================================================
 
-    // Use a wall-clock timer so animation progresses even when
-    // requestAnimationFrame is throttled (e.g. background tabs).
     let lastTime = performance.now();
 
-    // Tick at 60 Hz via setInterval (immune to rAF throttling)
     setInterval(() => {
         const now = performance.now();
         const dt = Math.min((now - lastTime) / 1000, 0.1);
@@ -313,7 +663,6 @@
         tick(dt);
     }, 16);
 
-    // Render whenever the browser allows
     function render() {
         requestAnimationFrame(render);
         controls.update();
@@ -321,12 +670,94 @@
     }
     render();
 
-    // Responsive resize
     addEventListener('resize', () => {
         camera.aspect = innerWidth / innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(innerWidth, innerHeight);
     });
+
+    // ================================================================
+    // EVENT HANDLERS
+    // ================================================================
+
+    presetSelect.addEventListener('change', () => {
+        const val = presetSelect.value;
+        if (val) {
+            piecesInput.value = val;
+            loadPuzzle(val);
+        }
+    });
+
+    solveBtn.addEventListener('click', () => {
+        const val = piecesInput.value.trim();
+        if (val) loadPuzzle(val);
+    });
+
+    piecesInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const val = piecesInput.value.trim();
+            if (val) loadPuzzle(val);
+        }
+    });
+
+    solutionSelect.addEventListener('change', () => {
+        loadSolution(parseInt(solutionSelect.value, 10));
+    });
+
+    btnPlay.addEventListener('click', togglePlayPause);
+    btnPrev.addEventListener('click', () => {
+        const base = targetStep !== null ? targetStep : currentStep();
+        stepTo(base - 1);
+    });
+    btnNext.addEventListener('click', () => {
+        const base = targetStep !== null ? targetStep : currentStep();
+        stepTo(base + 1);
+    });
+
+    autoRotateCb.addEventListener('change', () => {
+        controls.autoRotate = autoRotateCb.checked;
+    });
+
+    // Keyboard shortcuts (only when input is not focused)
+    addEventListener('keydown', (e) => {
+        if (document.activeElement === piecesInput) return;
+        if (numSteps === 0) return;
+
+        switch (e.key) {
+            case ' ':
+                e.preventDefault();
+                togglePlayPause();
+                break;
+            case 'ArrowLeft':
+                e.preventDefault();
+                stepTo((targetStep !== null ? targetStep : currentStep()) - 1);
+                break;
+            case 'ArrowRight':
+                e.preventDefault();
+                stepTo((targetStep !== null ? targetStep : currentStep()) + 1);
+                break;
+            case 'Home':
+                e.preventDefault();
+                stepTo(0);
+                break;
+            case 'End':
+                e.preventDefault();
+                stepTo(numSteps);
+                break;
+        }
+    });
+
+    // ================================================================
+    // AUTO-LOAD FROM URL PARAMETER
+    // ================================================================
+
+    const params = new URLSearchParams(location.search);
+    const puzzleParam = params.get('puzzle');
+    if (puzzleParam) {
+        piecesInput.value = puzzleParam;
+        loadPuzzle(puzzleParam);
+    }
 
     </script>
 </body>

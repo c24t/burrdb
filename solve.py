@@ -13,11 +13,13 @@ Usage:
 
 import argparse
 import gzip
+import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
@@ -255,6 +257,225 @@ def solve(piece_ids: list[int], verbose: bool = False) -> dict:
                 result["assemblies"] = assemblies
                 result["solutions"] = solutions
                 result["solvable"] = solutions > 0
+
+    return result
+
+
+# ==========================================
+# Full solution parsing (for animation)
+# ==========================================
+
+def parse_assembly(asm_str: str, shape_max_counts: list[int]):
+    """Parse BurrTools assembly string into per-slot positions and transforms.
+
+    The assembly string contains 4 values per piece slot: x y z transform_index.
+    Slots are ordered by shape index, then by instance within each shape.
+
+    Args:
+        asm_str: Space-separated string "x y z trans x y z trans ..."
+        shape_max_counts: List of max counts per shape (from <shape max="N"/>)
+
+    Returns:
+        (positions, transforms, slot_to_shape):
+            positions: list of [x, y, z] per slot (6 total)
+            transforms: list of rotation indices per slot
+            slot_to_shape: list mapping slot index → shape index
+    """
+    vals = list(map(int, asm_str.split()))
+    positions = []
+    transforms = []
+    slot_to_shape = []
+
+    idx = 0
+    for shape_idx, max_count in enumerate(shape_max_counts):
+        for _ in range(max_count):
+            x, y, z, trans = vals[idx : idx + 4]
+            positions.append([x, y, z])
+            transforms.append(trans)
+            slot_to_shape.append(shape_idx)
+            idx += 4
+
+    return positions, transforms, slot_to_shape
+
+
+def flatten_separation_tree(
+    sep_el, num_pieces: int, last_known: dict, exit_dist: int = 6
+) -> list:
+    """Recursively flatten a BurrTools separation tree into linear keyframes.
+
+    Walks the nested <separation> XML tree depth-first, collecting piece
+    positions at each state.  Exit values (|coord| > 10000) are replaced
+    with sensible slide-out positions.
+
+    Args:
+        sep_el: <separation> XML element
+        num_pieces: Total piece count (always 6 for our burr puzzles)
+        last_known: Mutable dict {global_piece_index: [x, y, z]} tracking
+                    every piece's most recent position.  Updated in place.
+        exit_dist: Distance (in grid units) to slide pieces out on exit.
+
+    Returns:
+        List of keyframes.  Each keyframe is a list of [x, y, z] for all
+        *num_pieces* pieces (indexed 0 .. num_pieces-1).
+    """
+    # Map local indices in this node to global piece indices
+    pieces_el = sep_el.find("pieces")
+    global_indices = list(map(int, pieces_el.text.split()))
+
+    keyframes = []
+
+    for state_el in sep_el.findall("state"):
+        dx = list(map(int, state_el.find("dx").text.split()))
+        dy = list(map(int, state_el.find("dy").text.split()))
+        dz = list(map(int, state_el.find("dz").text.split()))
+
+        for local_idx, global_idx in enumerate(global_indices):
+            x, y, z = dx[local_idx], dy[local_idx], dz[local_idx]
+            prev = last_known[global_idx]
+
+            # Replace absurd exit values with a slide-out position
+            if abs(x) > 10000:
+                x = prev[0] + (1 if x > 0 else -1) * exit_dist
+            if abs(y) > 10000:
+                y = prev[1] + (1 if y > 0 else -1) * exit_dist
+            if abs(z) > 10000:
+                z = prev[2] + (1 if z > 0 else -1) * exit_dist
+
+            last_known[global_idx] = [x, y, z]
+
+        # Snapshot all pieces' current positions as a keyframe
+        keyframes.append([list(last_known[i]) for i in range(num_pieces)])
+
+    # Recurse into child separations (left group first, then removed group)
+    for child_type in ("left", "removed"):
+        child = sep_el.find(f"separation[@type='{child_type}']")
+        if child is not None:
+            child_kfs = flatten_separation_tree(
+                child, num_pieces, last_known, exit_dist
+            )
+            # Skip child's first keyframe — it duplicates the current state
+            keyframes.extend(child_kfs[1:])
+
+    return keyframes
+
+
+def compute_level(sep_el) -> str:
+    """Compute the disassembly level string from a separation tree.
+
+    Returns a dot-separated string like "5.1.1.1.1" where each number is
+    the number of moves at that stage of the disassembly.
+    """
+    num_moves = len(sep_el.findall("state")) - 1
+    sub_levels = []
+    for child_type in ("left", "removed"):
+        child = sep_el.find(f"separation[@type='{child_type}']")
+        if child is not None:
+            sub_levels.append(compute_level(child))
+    if sub_levels:
+        return f"{num_moves}." + ".".join(sub_levels)
+    return str(num_moves)
+
+
+def solve_full(piece_ids: list[int], verbose: bool = False) -> dict:
+    """Run the BurrTools solver and return full solution data for animation.
+
+    Unlike solve(), this parses the complete output XML including assembly
+    placements, rotation transforms, and the separation tree (flattened
+    into linear keyframes).
+
+    Returns a dict:
+        pieces: list of 6 input piece IDs
+        numAssemblies: int
+        numSolutions: int
+        solutions: list of dicts, each with:
+            pieceIds: list of 6 piece IDs (expanded for duplicates)
+            transforms: list of 6 rotation indices
+            keyframes: list of keyframes, each [6 × [x, y, z]]
+            level: str like "5.1.1.1.1"
+    """
+    solver = find_solver()
+    xmpuzzle_data = generate_xmpuzzle(piece_ids)
+
+    # Recover the shape grouping used by generate_xmpuzzle
+    counts = Counter(piece_ids)
+    unique_ids = list(dict.fromkeys(piece_ids))
+    shape_max_counts = [counts[pid] for pid in unique_ids]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        puzzle_path = os.path.join(tmpdir, "puzzle.xmpuzzle")
+        output_path = puzzle_path + "ttt"
+
+        with open(puzzle_path, "wb") as f:
+            f.write(xmpuzzle_data)
+
+        cmd = [str(solver), "-R", "-d", puzzle_path]
+        if verbose:
+            print(f"  Running: {' '.join(cmd)}", file=sys.stderr)
+
+        read_fd, write_fd = os.pipe()
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                stdin=read_fd,
+                timeout=300,
+            )
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
+        if verbose:
+            for line in proc.stdout.strip().split("\n"):
+                line = line.strip()
+                if line:
+                    print(f"  solver: {line}", file=sys.stderr)
+
+        result = {
+            "pieces": piece_ids,
+            "numAssemblies": 0,
+            "numSolutions": 0,
+            "solutions": [],
+        }
+
+        if not os.path.exists(output_path):
+            return result
+
+        tree = ET.parse(output_path)
+        xml_root = tree.getroot()
+
+        problem = xml_root.find(".//problem")
+        if problem is None:
+            return result
+
+        result["numAssemblies"] = int(problem.get("assemblies", "0"))
+        result["numSolutions"] = int(problem.get("solutions", "0"))
+
+        for sol_el in xml_root.findall(".//solution"):
+            asm_el = sol_el.find("assembly")
+            sep_el = sol_el.find("separation")
+            if asm_el is None or sep_el is None:
+                continue
+
+            positions, transforms, slot_to_shape = parse_assembly(
+                asm_el.text, shape_max_counts
+            )
+            slot_piece_ids = [unique_ids[si] for si in slot_to_shape]
+
+            # Flatten the separation tree into a linear keyframe sequence
+            last_known = {i: list(pos) for i, pos in enumerate(positions)}
+            keyframes = flatten_separation_tree(sep_el, 6, last_known)
+
+            level = compute_level(sep_el)
+
+            result["solutions"].append(
+                {
+                    "pieceIds": slot_piece_ids,
+                    "transforms": transforms,
+                    "keyframes": keyframes,
+                    "level": level,
+                }
+            )
 
     return result
 
