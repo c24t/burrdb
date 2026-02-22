@@ -151,6 +151,19 @@
         <h1>Burr Puzzle Animator</h1>
 
         <div class="control-group">
+            <label for="preset-select">Preset Puzzle</label>
+            <select id="preset-select">
+                <option value="">— Custom —</option>
+                <option value="103 760 960 992 996 1024">Bill's Baffling Burr</option>
+                <option value="1 256 256 256 928 928">Chinese Cross</option>
+                <option value="88 512 704 960 992 1008">Love's Dozen</option>
+                <option value="52 792 911 824 975 1024">Hoffmann Block</option>
+                <option value="1 256 824 975 928 1024">Six-Way Set</option>
+                <option value="1 188 824 975 1024 1024">Triple Trouble</option>
+            </select>
+        </div>
+
+        <div class="control-group">
             <label for="pieces-input">Piece IDs</label>
             <div class="input-row">
                 <input id="pieces-input" type="text" placeholder="103 760 960 992 996 1024" spellcheck="false" autocomplete="off">
@@ -338,6 +351,7 @@
     // UI ELEMENTS
     // ================================================================
 
+    const presetSelect  = document.getElementById('preset-select');
     const piecesInput   = document.getElementById('pieces-input');
     const solveBtn      = document.getElementById('solve-btn');
     const solutionGroup = document.getElementById('solution-group');
@@ -357,7 +371,15 @@
     // LOAD PUZZLE FROM API
     // ================================================================
 
+    function syncPresetDropdown(inputStr) {
+        // Normalize to compare: sort-independent match on trimmed values
+        const norm = inputStr.trim().replace(/\s+/g, ' ');
+        const match = [...presetSelect.options].find(o => o.value === norm);
+        presetSelect.value = match ? match.value : '';
+    }
+
     async function loadPuzzle(inputStr) {
+        syncPresetDropdown(inputStr);
         setStatus('Solving...', 'solving');
         solveBtn.disabled = true;
 
@@ -649,6 +671,14 @@
     // ================================================================
     // EVENT HANDLERS
     // ================================================================
+
+    presetSelect.addEventListener('change', () => {
+        const val = presetSelect.value;
+        if (val) {
+            piecesInput.value = val;
+            loadPuzzle(val);
+        }
+    });
 
     solveBtn.addEventListener('click', () => {
         const val = piecesInput.value.trim();
