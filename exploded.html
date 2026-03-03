@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Burr No. 305 — Exploded View</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #f5f5f5;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+        }
+        .container { text-align: center; padding: 20px; }
+        h1 { font-size: 20px; margin: 0 0 4px 0; letter-spacing: 1px; }
+        .subtitle { font-size: 13px; color: #888; margin-bottom: 16px; }
+        #svg-container svg { width: 600px; height: auto; max-width: 95vw; max-height: 85vh; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Burr No. 305</h1>
+        <div class="subtitle">824 &middot; 52 &middot; 911 &middot; 359 &middot; 960 &middot; 992</div>
+        <div id="svg-container"></div>
+    </div>
+
+    <script>
+    // ================================================================
+    // CONSTANTS (from anim.html)
+    // ================================================================
+
+    const ROT = [
+        [ 1, 0, 0,  0, 1, 0,  0, 0, 1],
+        [ 1, 0, 0,  0, 0,-1,  0, 1, 0],
+        [ 1, 0, 0,  0,-1, 0,  0, 0,-1],
+        [ 1, 0, 0,  0, 0, 1,  0,-1, 0],
+        [ 0, 0,-1,  0, 1, 0,  1, 0, 0],
+        [ 0,-1, 0,  0, 0,-1,  1, 0, 0],
+        [ 0, 0, 1,  0,-1, 0,  1, 0, 0],
+        [ 0, 1, 0,  0, 0, 1,  1, 0, 0],
+        [-1, 0, 0,  0, 1, 0,  0, 0,-1],
+        [-1, 0, 0,  0, 0,-1,  0,-1, 0],
+        [-1, 0, 0,  0,-1, 0,  0, 0, 1],
+        [-1, 0, 0,  0, 0, 1,  0, 1, 0],
+        [ 0, 0, 1,  0, 1, 0, -1, 0, 0],
+        [ 0, 1, 0,  0, 0,-1, -1, 0, 0],
+        [ 0, 0,-1,  0,-1, 0, -1, 0, 0],
+        [ 0,-1, 0,  0, 0, 1, -1, 0, 0],
+        [ 0,-1, 0,  1, 0, 0,  0, 0, 1],
+        [ 0, 0, 1,  1, 0, 0,  0, 1, 0],
+        [ 0, 1, 0,  1, 0, 0,  0, 0,-1],
+        [ 0, 0,-1,  1, 0, 0,  0,-1, 0],
+        [ 0, 1, 0, -1, 0, 0,  0, 0, 1],
+        [ 0, 0,-1, -1, 0, 0,  0, 1, 0],
+        [ 0,-1, 0, -1, 0, 0,  0, 0,-1],
+        [ 0, 0, 1, -1, 0, 0,  0,-1, 0],
+    ];
+
+    const BIT_MAP = [
+        [1,1,1],[2,1,1],[3,1,1],[4,1,1],
+        [1,0,1],[2,0,1],[3,0,1],[4,0,1],
+        [2,1,0],[3,1,0],
+        [2,0,0],[3,0,0],
+    ];
+
+    const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#42d4f4', '#f032e6'];
+
+    // ================================================================
+    // PIECE VOXEL GENERATION (from anim.html)
+    // ================================================================
+
+    function getPieceVoxels(pieceId) {
+        const bitmap = pieceId - 1;
+        const removable = new Map();
+        BIT_MAP.forEach((pos, idx) => removable.set(`${pos[0]},${pos[1]},${pos[2]}`, idx));
+        const voxels = [];
+        for (let z = 0; z < 2; z++)
+            for (let y = 0; y < 2; y++)
+                for (let x = 0; x < 6; x++) {
+                    const bitIdx = removable.get(`${x},${y},${z}`);
+                    if (bitIdx !== undefined) {
+                        if (!((bitmap >> bitIdx) & 1)) voxels.push([x, y, z]);
+                    } else {
+                        voxels.push([x, y, z]);
+                    }
+                }
+        return voxels;
+    }
+
+    function applyRot(M, x, y, z) {
+        return [
+            M[0]*x + M[1]*y + M[2]*z,
+            M[3]*x + M[4]*y + M[5]*z,
+            M[6]*x + M[7]*y + M[8]*z,
+        ];
+    }
+
+    // ================================================================
+    // PUZZLE 305 SOLUTION DATA (from solver)
+    // ================================================================
+
+    const PUZZLE = {
+        name: 'Burr No. 305',
+        pieces: [
+            { id: 824, rot: 0,  pos: [0, 2, 1], explode: [0, 0, -1] },  // Slot 0 (X-axis, z-lower)
+            { id: 52,  rot: 17, pos: [1, 0, 2], explode: [-1, 0, 0] },  // Slot 2 (Y-axis, x-lower)
+            { id: 911, rot: 19, pos: [4, 0, 3], explode: [1, 0, 0] },   // Slot 3 (Y-axis, x-upper)
+            { id: 359, rot: 14, pos: [3, 4, 5], explode: [0, 1, 0] },   // Slot 5 (Z-axis, y-upper)
+            { id: 960, rot: 8,  pos: [5, 2, 4], explode: [0, 0, 1] },   // Slot 1 (X-axis, z-upper)
+            { id: 992, rot: 7,  pos: [2, 1, 0], explode: [0, -1, 0] },  // Slot 4 (Z-axis, y-lower)
+        ],
+    };
+
+    // ================================================================
+    // ISOMETRIC PROJECTION
+    // ================================================================
+
+    const SCALE = 16;
+    const COS30 = Math.cos(Math.PI / 6);
+    const SIN30 = 0.5;
+    const EXPLODE_DIST = 7;
+
+    function isoProject(x, y, z) {
+        return [
+            (x - y) * COS30 * SCALE,
+            (x + y) * SIN30 * SCALE - z * SCALE,
+        ];
+    }
+
+    // ================================================================
+    // SCENE ROTATION (lowest-ID piece goes to top)
+    // ================================================================
+
+    // Find the rotation that maps the lowest-ID piece's explode direction to +Z (up)
+    function getSceneRotation(explodeDir) {
+        const [dx, dy, dz] = explodeDir;
+        if (dz ===  1) return (x, y, z) => [x, y, z];
+        if (dz === -1) return (x, y, z) => [x, -y, -z];
+        if (dx ===  1) return (x, y, z) => [-z, y, x];
+        if (dx === -1) return (x, y, z) => [z, y, -x];
+        if (dy ===  1) return (x, y, z) => [x, -z, y];
+        if (dy === -1) return (x, y, z) => [x, z, -y];
+    }
+
+    const lowestIdPiece = PUZZLE.pieces.reduce((a, b) => a.id < b.id ? a : b);
+    const sceneRot = getSceneRotation(lowestIdPiece.explode);
+    const CENTER = [2.5, 2.5, 2.5];
+
+    function rotateAroundCenter(x, y, z) {
+        const [rx, ry, rz] = sceneRot(x - CENTER[0], y - CENTER[1], z - CENTER[2]);
+        return [rx + CENTER[0], ry + CENTER[1], rz + CENTER[2]];
+    }
+
+    // ================================================================
+    // COLOR SHADING
+    // ================================================================
+
+    function hexToRgb(hex) {
+        return [
+            parseInt(hex.slice(1, 3), 16),
+            parseInt(hex.slice(3, 5), 16),
+            parseInt(hex.slice(5, 7), 16),
+        ];
+    }
+
+    function rgbToHex(r, g, b) {
+        return '#' + [r, g, b].map(c =>
+            Math.round(Math.max(0, Math.min(255, c))).toString(16).padStart(2, '0')
+        ).join('');
+    }
+
+    function shadeColor(hex, factor) {
+        const [r, g, b] = hexToRgb(hex);
+        return rgbToHex(r * factor, g * factor, b * factor);
+    }
+
+    // ================================================================
+    // BUILD ALL FACES
+    // ================================================================
+
+    function buildFaces() {
+        const allFaces = [];
+
+        for (let pi = 0; pi < PUZZLE.pieces.length; pi++) {
+            const piece = PUZZLE.pieces[pi];
+            const M = ROT[piece.rot];
+            const localVoxels = getPieceVoxels(piece.id);
+
+            // Compute global positions for each voxel, then apply scene rotation
+            const globalVoxels = localVoxels.map(([lx, ly, lz]) => {
+                const [rx, ry, rz] = applyRot(M, lx, ly, lz);
+                return rotateAroundCenter(
+                    rx + piece.pos[0] + piece.explode[0] * EXPLODE_DIST,
+                    ry + piece.pos[1] + piece.explode[1] * EXPLODE_DIST,
+                    rz + piece.pos[2] + piece.explode[2] * EXPLODE_DIST,
+                );
+            });
+
+            // Set for fast neighbor lookup
+            const voxelSet = new Set(globalVoxels.map(v => v.join(',')));
+
+            // Visible faces: +X, +Y, +Z (camera looks along -1,-1,-1)
+            // Shading: top=bright, left-on-screen(+Y)=medium, right-on-screen(+X)=dark
+            const topColor = shadeColor(COLORS[pi], 1.0);
+            const leftColor = shadeColor(COLORS[pi], 0.75);   // +Y face, left side on screen
+            const rightColor = shadeColor(COLORS[pi], 0.55);  // +X face, right side on screen
+
+            for (const [gx, gy, gz] of globalVoxels) {
+                const depth = gx + gy + gz;
+
+                // Top face (+Z): draw if no voxel above
+                if (!voxelSet.has(`${gx},${gy},${gz + 1}`)) {
+                    allFaces.push({
+                        depth: depth + 0.3,
+                        corners: [
+                            isoProject(gx, gy, gz + 1),
+                            isoProject(gx + 1, gy, gz + 1),
+                            isoProject(gx + 1, gy + 1, gz + 1),
+                            isoProject(gx, gy + 1, gz + 1),
+                        ],
+                        color: topColor,
+                    });
+                }
+
+                // Left face (+Y): draw if no voxel in +Y direction
+                if (!voxelSet.has(`${gx},${gy + 1},${gz}`)) {
+                    allFaces.push({
+                        depth: depth + 0.2,
+                        corners: [
+                            isoProject(gx, gy + 1, gz),
+                            isoProject(gx + 1, gy + 1, gz),
+                            isoProject(gx + 1, gy + 1, gz + 1),
+                            isoProject(gx, gy + 1, gz + 1),
+                        ],
+                        color: leftColor,
+                    });
+                }
+
+                // Right face (+X): draw if no voxel in +X direction
+                if (!voxelSet.has(`${gx + 1},${gy},${gz}`)) {
+                    allFaces.push({
+                        depth: depth + 0.1,
+                        corners: [
+                            isoProject(gx + 1, gy, gz),
+                            isoProject(gx + 1, gy + 1, gz),
+                            isoProject(gx + 1, gy + 1, gz + 1),
+                            isoProject(gx + 1, gy, gz + 1),
+                        ],
+                        color: rightColor,
+                    });
+                }
+            }
+        }
+
+        // Sort ascending by depth (painter's algorithm: back to front)
+        allFaces.sort((a, b) => a.depth - b.depth);
+        return allFaces;
+    }
+
+    // ================================================================
+    // AXIS LINES (decorative center lines showing explode directions)
+    // ================================================================
+
+    function buildAxisLines() {
+        const center = CENTER;
+        const dirs = [
+            [1, 0, 0], [-1, 0, 0],
+            [0, 1, 0], [0, -1, 0],
+            [0, 0, 1], [0, 0, -1],
+        ];
+        const lineLen = 2.5;
+        const lines = [];
+        const [x1, y1] = isoProject(...center);  // center is fixed by rotation
+        for (const [dx, dy, dz] of dirs) {
+            const endpoint = rotateAroundCenter(
+                center[0] + dx * lineLen,
+                center[1] + dy * lineLen,
+                center[2] + dz * lineLen,
+            );
+            const [x2, y2] = isoProject(...endpoint);
+            lines.push({ x1, y1, x2, y2 });
+        }
+        return lines;
+    }
+
+    // ================================================================
+    // GENERATE SVG
+    // ================================================================
+
+    function generateSVG() {
+        const faces = buildFaces();
+        const axisLines = buildAxisLines();
+
+        // Compute bounding box
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const face of faces) {
+            for (const [sx, sy] of face.corners) {
+                if (sx < minX) minX = sx;
+                if (sy < minY) minY = sy;
+                if (sx > maxX) maxX = sx;
+                if (sy > maxY) maxY = sy;
+            }
+        }
+
+        const pad = 20;
+        const vbX = minX - pad;
+        const vbY = minY - pad;
+        const vbW = maxX - minX + 2 * pad;
+        const vbH = maxY - minY + 2 * pad;
+
+        const parts = [];
+        parts.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbX.toFixed(1)} ${vbY.toFixed(1)} ${vbW.toFixed(1)} ${vbH.toFixed(1)}">`);
+
+        // Axis lines (behind everything)
+        for (const line of axisLines) {
+            parts.push(`  <line x1="${line.x1.toFixed(2)}" y1="${line.y1.toFixed(2)}" x2="${line.x2.toFixed(2)}" y2="${line.y2.toFixed(2)}" stroke="#bbb" stroke-width="0.5" stroke-linecap="round"/>`);
+        }
+
+        // Faces (sorted back to front)
+        for (const face of faces) {
+            const pts = face.corners.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
+            parts.push(`  <polygon points="${pts}" fill="${face.color}" stroke="#1a1a2e" stroke-width="0.3" stroke-linejoin="round"/>`);
+        }
+
+        parts.push('</svg>');
+        return parts.join('\n');
+    }
+
+    // ================================================================
+    // RENDER
+    // ================================================================
+
+    document.getElementById('svg-container').innerHTML = generateSVG();
+    </script>
+</body>
+</html>
