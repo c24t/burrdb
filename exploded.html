@@ -19,6 +19,7 @@
         h1 { font-size: 20px; margin: 0 0 4px 0; letter-spacing: 1px; }
         .subtitle { font-size: 13px; color: #888; margin-bottom: 16px; }
         #svg-container svg { width: 600px; height: auto; max-width: 95vw; max-height: 85vh; }
+
     </style>
 </head>
 <body>
@@ -122,7 +123,6 @@
     const SCALE = 16;
     const COS30 = Math.cos(Math.PI / 6);
     const SIN30 = 0.5;
-    const EXPLODE_DIST = 7;
 
     function isoProject(x, y, z) {
         return [
@@ -135,7 +135,6 @@
     // SCENE ROTATION (lowest-ID piece goes to top)
     // ================================================================
 
-    // Find the rotation that maps the lowest-ID piece's explode direction to +Z (up)
     function getSceneRotation(explodeDir) {
         const [dx, dy, dz] = explodeDir;
         if (dz ===  1) return (x, y, z) => [x, y, z];
@@ -179,18 +178,29 @@
     }
 
     // ================================================================
-    // BUILD ALL FACES
+    // BAKED PARAMETERS
     // ================================================================
 
-    function buildFaces() {
-        const allFaces = [];
+    const TILT_LIMIT = 30 * Math.PI / 180;   // 30° in radians
+    const TRANSITION_TIME = 200;              // ms
+    const EXPLODE_DIST = 7;
+    const DAMPING = 0.5;                      // power-curve exponent = 1/(1+DAMPING)
+    const DRAG_EXPONENT = 1 / (1 + DAMPING);  // precomputed
 
+    // ================================================================
+    // PRECOMPUTE STATIC PIECE DATA
+    // ================================================================
+
+    let pieceData = [];
+    let viewBox = '';
+
+    function buildPieceData() {
+        pieceData = [];
         for (let pi = 0; pi < PUZZLE.pieces.length; pi++) {
             const piece = PUZZLE.pieces[pi];
             const M = ROT[piece.rot];
             const localVoxels = getPieceVoxels(piece.id);
 
-            // Compute global positions for each voxel, then apply scene rotation
             const globalVoxels = localVoxels.map(([lx, ly, lz]) => {
                 const [rx, ry, rz] = applyRot(M, lx, ly, lz);
                 return rotateAroundCenter(
@@ -200,130 +210,281 @@
                 );
             });
 
-            // Set for fast neighbor lookup
             const voxelSet = new Set(globalVoxels.map(v => v.join(',')));
 
-            // Visible faces: +X, +Y, +Z (camera looks along -1,-1,-1)
-            // Shading: top=bright, left-on-screen(+Y)=medium, right-on-screen(+X)=dark
+            // 3D center of this piece
+            let cx = 0, cy = 0, cz = 0;
+            for (const [x, y, z] of globalVoxels) { cx += x; cy += y; cz += z; }
+            const n = globalVoxels.length;
+            const center3D = [cx / n, cy / n, cz / n];
+
+            // 2D center (fixed screen position)
+            const center2D = isoProject(...center3D);
+
+            // Precompute face visibility and colors
             const topColor = shadeColor(COLORS[pi], 1.0);
-            const leftColor = shadeColor(COLORS[pi], 0.75);   // +Y face, left side on screen
-            const rightColor = shadeColor(COLORS[pi], 0.55);  // +X face, right side on screen
+            const leftColor = shadeColor(COLORS[pi], 0.75);
+            const rightColor = shadeColor(COLORS[pi], 0.55);
 
+            // Precompute which faces to draw for each voxel
+            const voxelFaces = [];
             for (const [gx, gy, gz] of globalVoxels) {
-                const depth = gx + gy + gz;
-
-                // Top face (+Z): draw if no voxel above
+                const faces = [];
                 if (!voxelSet.has(`${gx},${gy},${gz + 1}`)) {
-                    allFaces.push({
-                        depth: depth + 0.3,
-                        corners: [
-                            isoProject(gx, gy, gz + 1),
-                            isoProject(gx + 1, gy, gz + 1),
-                            isoProject(gx + 1, gy + 1, gz + 1),
-                            isoProject(gx, gy + 1, gz + 1),
-                        ],
-                        color: topColor,
-                    });
+                    faces.push({ type: 'top', offsets: [[gx,gy,gz+1],[gx+1,gy,gz+1],[gx+1,gy+1,gz+1],[gx,gy+1,gz+1]], color: topColor });
                 }
-
-                // Left face (+Y): draw if no voxel in +Y direction
                 if (!voxelSet.has(`${gx},${gy + 1},${gz}`)) {
-                    allFaces.push({
-                        depth: depth + 0.2,
-                        corners: [
-                            isoProject(gx, gy + 1, gz),
-                            isoProject(gx + 1, gy + 1, gz),
-                            isoProject(gx + 1, gy + 1, gz + 1),
-                            isoProject(gx, gy + 1, gz + 1),
-                        ],
-                        color: leftColor,
-                    });
+                    faces.push({ type: 'left', offsets: [[gx,gy+1,gz],[gx+1,gy+1,gz],[gx+1,gy+1,gz+1],[gx,gy+1,gz+1]], color: leftColor });
                 }
-
-                // Right face (+X): draw if no voxel in +X direction
                 if (!voxelSet.has(`${gx + 1},${gy},${gz}`)) {
-                    allFaces.push({
-                        depth: depth + 0.1,
-                        corners: [
-                            isoProject(gx + 1, gy, gz),
-                            isoProject(gx + 1, gy + 1, gz),
-                            isoProject(gx + 1, gy + 1, gz + 1),
-                            isoProject(gx + 1, gy, gz + 1),
-                        ],
-                        color: rightColor,
+                    faces.push({ type: 'right', offsets: [[gx+1,gy,gz],[gx+1,gy+1,gz],[gx+1,gy+1,gz+1],[gx+1,gy,gz+1]], color: rightColor });
+                }
+                if (faces.length > 0) {
+                    voxelFaces.push({ gx, gy, gz, faces });
+                }
+            }
+
+            // Scene-rotated explode direction (for label leader lines)
+            const explodeDir = sceneRot(...piece.explode);
+
+            pieceData.push({ id: piece.id, center3D, center2D, voxelFaces, explodeDir });
+        }
+    }
+
+    function computeViewBox() {
+        // Sample extreme tilt angles to find worst-case bounds
+        const L = TILT_LIMIT;
+        const samples = [
+            [0, 0], [L, 0], [-L, 0], [0, L], [0, -L],
+            [L, L], [L, -L], [-L, L], [-L, -L],
+        ];
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        for (const [az, ax] of samples) {
+            const faces = buildFacesForRender(az, ax);
+            for (const face of faces) {
+                for (const [sx, sy] of face.corners) {
+                    if (sx < minX) minX = sx;
+                    if (sy < minY) minY = sy;
+                    if (sx > maxX) maxX = sx;
+                    if (sy > maxY) maxY = sy;
+                }
+            }
+            const labels = buildPieceLabels(az, ax);
+            for (const pl of labels) {
+                for (const [sx, sy] of [[pl.lx, pl.ly]]) {
+                    if (sx < minX) minX = sx;
+                    if (sy < minY) minY = sy;
+                    if (sx > maxX) maxX = sx;
+                    if (sy > maxY) maxY = sy;
+                }
+            }
+        }
+        const pad = 10; // small extra padding for text overflow
+        viewBox = `${(minX - pad).toFixed(1)} ${(minY - pad).toFixed(1)} ${(maxX - minX + 2 * pad).toFixed(1)} ${(maxY - minY + 2 * pad).toFixed(1)}`;
+    }
+
+    // ================================================================
+    // SMALL ROTATION MATRIX (for interactive tilt)
+    // ================================================================
+
+    // Build rotation matrix Rz(az) * R_pitch(ap) for interactive tilt.
+    // az = rotation around Z axis (horizontal drag → turntable)
+    // ap = rotation around (1/√2, −1/√2, 0) axis (vertical drag → pitch)
+    //
+    // The pitch axis is the diagonal across the X/Y plane that aligns
+    // with the screen-horizontal direction in the isometric view.
+    // Tilting around it tips the scene toward/away from the viewer,
+    // keeping the vertical screen axis as the line of symmetry.
+    function makeTiltMatrix(az, ap) {
+        const cz = Math.cos(az), sz = Math.sin(az);
+        const cp = Math.cos(ap), sp = Math.sin(ap);
+        const S2 = Math.SQRT1_2;  // 1/√2
+
+        // R_pitch: rotation around unit axis (S2, −S2, 0) by angle ap
+        //   [ (1+cp)/2    (cp−1)/2    −sp·S2 ]
+        //   [ (cp−1)/2    (1+cp)/2    −sp·S2 ]
+        //   [  sp·S2       sp·S2        cp   ]
+        const a = (1 + cp) / 2;    // diagonal
+        const b = (cp - 1) / 2;    // off-diagonal
+        const c = -sp * S2;        // upper-right column
+        const d =  sp * S2;        // lower-left entries
+
+        // Compose Rz(az) * R_pitch(ap), row-major 3×3
+        return [
+            cz*a - sz*b,   cz*b - sz*a,   c * (cz - sz),
+            sz*a + cz*b,   sz*b + cz*a,   c * (sz + cz),
+            d,             d,             cp,
+        ];
+    }
+
+    function applyTilt(M, x, y, z) {
+        return [
+            M[0]*x + M[1]*y + M[2]*z,
+            M[3]*x + M[4]*y + M[5]*z,
+            M[6]*x + M[7]*y + M[8]*z,
+        ];
+    }
+
+    // ================================================================
+    // BUILD FACES WITH TILT
+    // ================================================================
+
+    function buildFacesForRender(az, ax) {
+        const tiltM = makeTiltMatrix(az, ax);
+        const allFaces = [];
+
+        for (const pd of pieceData) {
+            const [cx3, cy3, cz3] = pd.center3D;
+            const [cx2, cy2] = pd.center2D;
+
+            for (const vf of pd.voxelFaces) {
+                // Depth: use original (untilted) position for sorting stability
+                const depth = vf.gx + vf.gy + vf.gz;
+
+                for (const face of vf.faces) {
+                    const depthBias = face.type === 'top' ? 0.3 : face.type === 'left' ? 0.2 : 0.1;
+                    const corners = face.offsets.map(([fx, fy, fz]) => {
+                        // Offset from piece center
+                        const dx = fx - cx3, dy = fy - cy3, dz = fz - cz3;
+                        // Apply tilt
+                        const [tx, ty, tz] = applyTilt(tiltM, dx, dy, dz);
+                        // Project tilted offset and translate to fixed screen center
+                        const [px, py] = isoProject(tx, ty, tz);
+                        return [px + cx2, py + cy2];
                     });
+                    allFaces.push({ depth: depth + depthBias, corners, color: face.color });
                 }
             }
         }
 
-        // Sort ascending by depth (painter's algorithm: back to front)
         allFaces.sort((a, b) => a.depth - b.depth);
         return allFaces;
     }
 
     // ================================================================
-    // AXIS LINES (decorative center lines showing explode directions)
+    // AXIS LINES WITH TILT
     // ================================================================
 
-    function buildAxisLines() {
+    function buildAxisLines(az, ax) {
+        const tiltM = makeTiltMatrix(az, ax);
         const center = CENTER;
-        const dirs = [
-            [1, 0, 0], [-1, 0, 0],
-            [0, 1, 0], [0, -1, 0],
-            [0, 0, 1], [0, 0, -1],
+        const axes = [
+            { dirs: [[0,-1,0], [0,1,0]], label: 'x' },    // +x top-right, −x bottom-left
+            { dirs: [[0,0,-1], [0,0,1]], label: 'y' },     // +y top-left, −y bottom-right
+            { dirs: [[-1,0,0], [1,0,0]], label: 'z' },     // +z up, −z down
         ];
         const lineLen = 2.5;
+        const labelExtend = 1.3;  // label position beyond line endpoint
+        const [cx2, cy2] = isoProject(...center);
+
         const lines = [];
-        const [x1, y1] = isoProject(...center);  // center is fixed by rotation
-        for (const [dx, dy, dz] of dirs) {
-            const endpoint = rotateAroundCenter(
-                center[0] + dx * lineLen,
-                center[1] + dy * lineLen,
-                center[2] + dz * lineLen,
+        const labels = [];
+        for (const axis of axes) {
+            for (const d of axis.dirs) {
+                const endpoint = rotateAroundCenter(
+                    center[0] + d[0] * lineLen,
+                    center[1] + d[1] * lineLen,
+                    center[2] + d[2] * lineLen,
+                );
+                const dx = endpoint[0] - center[0], dy = endpoint[1] - center[1], dz = endpoint[2] - center[2];
+                const [tx, ty, tz] = applyTilt(tiltM, dx, dy, dz);
+                const [px, py] = isoProject(tx, ty, tz);
+                lines.push({ x1: cx2, y1: cy2, x2: px + cx2, y2: py + cy2 });
+            }
+            // Label at the positive-direction endpoint, extended slightly
+            const [pd0, pd1, pd2] = axis.dirs[0];
+            const labelPt = rotateAroundCenter(
+                center[0] + pd0 * lineLen * labelExtend,
+                center[1] + pd1 * lineLen * labelExtend,
+                center[2] + pd2 * lineLen * labelExtend,
             );
-            const [x2, y2] = isoProject(...endpoint);
-            lines.push({ x1, y1, x2, y2 });
+            const ldx = labelPt[0] - center[0], ldy = labelPt[1] - center[1], ldz = labelPt[2] - center[2];
+            const [ltx, lty, ltz] = applyTilt(tiltM, ldx, ldy, ldz);
+            const [lpx, lpy] = isoProject(ltx, lty, ltz);
+            labels.push({ x: lpx + cx2, y: lpy + cy2, text: axis.label });
         }
-        return lines;
+        return { lines, labels };
+    }
+
+    // ================================================================
+    // PIECE ID LABELS WITH LEADER LINES
+    // ================================================================
+
+    function buildPieceLabels(az, ax) {
+        const tiltM = makeTiltMatrix(az, ax);
+        const labels = [];
+
+        for (const pd of pieceData) {
+            const [ex, ey, ez] = pd.explodeDir;
+            const [cx3, cy3, cz3] = pd.center3D;
+            const [cx2, cy2] = pd.center2D;
+
+            // Leader line starts just past piece edge, ends shortly after
+            const lineStart3D = [ex * 2.5, ey * 2.5, ez * 2.5];   // offset from piece center
+            const lineEnd3D   = [ex * 3.5, ey * 3.5, ez * 3.5];
+            const labelPt3D   = [ex * 4.3, ey * 4.3, ez * 4.3];
+
+            // Apply tilt to these offsets (rotate around piece center)
+            const [tsx, tsy, tsz] = applyTilt(tiltM, ...lineStart3D);
+            const [tex, tey, tez] = applyTilt(tiltM, ...lineEnd3D);
+            const [tlx, tly, tlz] = applyTilt(tiltM, ...labelPt3D);
+
+            // Project and translate to fixed 2D center
+            const [sx, sy] = isoProject(tsx, tsy, tsz);
+            const [exx, exy] = isoProject(tex, tey, tez);
+            const [lx, ly] = isoProject(tlx, tly, tlz);
+
+            labels.push({
+                id: pd.id,
+                x1: sx + cx2,  y1: sy + cy2,
+                x2: exx + cx2, y2: exy + cy2,
+                lx: lx + cx2,  ly: ly + cy2,
+            });
+        }
+        return labels;
     }
 
     // ================================================================
     // GENERATE SVG
     // ================================================================
 
-    function generateSVG() {
-        const faces = buildFaces();
-        const axisLines = buildAxisLines();
-
-        // Compute bounding box
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const face of faces) {
-            for (const [sx, sy] of face.corners) {
-                if (sx < minX) minX = sx;
-                if (sy < minY) minY = sy;
-                if (sx > maxX) maxX = sx;
-                if (sy > maxY) maxY = sy;
-            }
-        }
-
-        const pad = 20;
-        const vbX = minX - pad;
-        const vbY = minY - pad;
-        const vbW = maxX - minX + 2 * pad;
-        const vbH = maxY - minY + 2 * pad;
+    function generateSVG(az, ax) {
+        const faces = buildFacesForRender(az, ax);
+        const { lines: axisLines, labels: axisLabels } = buildAxisLines(az, ax);
+        const pieceLabels = buildPieceLabels(az, ax);
 
         const parts = [];
-        parts.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbX.toFixed(1)} ${vbY.toFixed(1)} ${vbW.toFixed(1)} ${vbH.toFixed(1)}">`);
+        parts.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">`);
 
-        // Axis lines (behind everything)
+        // Piece label leader lines (behind everything)
+        for (const pl of pieceLabels) {
+            parts.push(`  <line x1="${pl.x1.toFixed(2)}" y1="${pl.y1.toFixed(2)}" x2="${pl.x2.toFixed(2)}" y2="${pl.y2.toFixed(2)}" stroke="#bbb" stroke-width="0.5" stroke-linecap="round" style="pointer-events:none"/>`);
+        }
+
+        // Piece ID text labels (styled like axis labels)
+        for (const pl of pieceLabels) {
+            parts.push(`  <text x="${pl.lx.toFixed(2)}" y="${pl.ly.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="7" font-style="italic" fill="#999" font-family="Georgia, serif" style="pointer-events:none">${pl.id}</text>`);
+        }
+
+        // Axis lines
         for (const line of axisLines) {
             parts.push(`  <line x1="${line.x1.toFixed(2)}" y1="${line.y1.toFixed(2)}" x2="${line.x2.toFixed(2)}" y2="${line.y2.toFixed(2)}" stroke="#bbb" stroke-width="0.5" stroke-linecap="round"/>`);
         }
 
+        // Axis labels at positive endpoints
+        for (const label of axisLabels) {
+            parts.push(`  <text x="${label.x.toFixed(2)}" y="${label.y.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="7" font-style="italic" fill="#999" font-family="Georgia, serif" style="pointer-events:none">${label.text}</text>`);
+        }
+
+        // Invisible drag handle at center (larger hit area for the crosshairs)
+        const [hx, hy] = isoProject(...CENTER);
+        parts.push(`  <circle cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="30" fill="transparent" id="drag-handle" style="cursor:grab"/>`);
+
         // Faces (sorted back to front)
         for (const face of faces) {
             const pts = face.corners.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
-            parts.push(`  <polygon points="${pts}" fill="${face.color}" stroke="#1a1a2e" stroke-width="0.3" stroke-linejoin="round"/>`);
+            parts.push(`  <polygon points="${pts}" fill="${face.color}" stroke="#1a1a2e" stroke-width="0.3" stroke-linejoin="round" style="pointer-events:none"/>`);
         }
 
         parts.push('</svg>');
@@ -331,10 +492,181 @@
     }
 
     // ================================================================
-    // RENDER
+    // INTERACTIVE STATE
     // ================================================================
 
-    document.getElementById('svg-container').innerHTML = generateSVG();
+    let currentAz = 0, currentAx = 0;   // current tilt angles (radians)
+    let dragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let dragStartAz = 0, dragStartAx = 0;
+
+    // Spring-back animation
+    let springAnim = null;  // requestAnimationFrame ID
+    let springStartAz = 0, springStartAx = 0;
+    let springStartTime = 0;
+
+    function render() {
+        document.getElementById('svg-container').innerHTML = generateSVG(currentAz, currentAx);
+    }
+
+    function clampAngle(rad) {
+        return Math.max(-TILT_LIMIT, Math.min(TILT_LIMIT, rad));
+    }
+
+    // Map pixel drag offset to tilt angle using power curve.
+    // Full tilt at screen edge; DAMPING controls curve shape.
+    function mapDragToAngle(pixelOffset, maxDist) {
+        if (maxDist === 0) return 0;
+        const t = Math.max(-1, Math.min(1, pixelOffset / maxDist));
+        return Math.sign(t) * Math.pow(Math.abs(t), DRAG_EXPONENT) * TILT_LIMIT;
+    }
+
+    function easeOut(t) {
+        return 1 - (1 - t) * (1 - t);  // quadratic ease-out
+    }
+
+    function startSpringBack() {
+        cancelSpringBack();
+        springStartAz = currentAz;
+        springStartAx = currentAx;
+
+        // Start the clock one frame in the past so the first render shows
+        // visible movement immediately (no blank frame at t=0).
+        springStartTime = performance.now() - 16;
+
+        // Synchronous first step: renders immediately in the mouseup handler,
+        // eliminating the ~16ms rAF scheduling gap.
+        const firstElapsed = performance.now() - springStartTime;
+        const firstT = Math.min(1, firstElapsed / TRANSITION_TIME);
+        const firstE = easeOut(firstT);
+        currentAz = springStartAz * (1 - firstE);
+        currentAx = springStartAx * (1 - firstE);
+        render();
+
+        if (firstT < 1) {
+            function tick(now) {
+                const elapsed = now - springStartTime;
+                const t = Math.min(1, elapsed / TRANSITION_TIME);
+                const e = easeOut(t);
+
+                currentAz = springStartAz * (1 - e);
+                currentAx = springStartAx * (1 - e);
+                render();
+
+                if (t < 1) {
+                    springAnim = requestAnimationFrame(tick);
+                } else {
+                    currentAz = 0;
+                    currentAx = 0;
+                    springAnim = null;
+                    render();
+                }
+            }
+            springAnim = requestAnimationFrame(tick);
+        } else {
+            currentAz = 0;
+            currentAx = 0;
+            render();
+        }
+    }
+
+    function cancelSpringBack() {
+        if (springAnim !== null) {
+            cancelAnimationFrame(springAnim);
+            springAnim = null;
+        }
+    }
+
+    // ================================================================
+    // MOUSE HANDLERS
+    // ================================================================
+
+    const svgContainer = document.getElementById('svg-container');
+
+    svgContainer.addEventListener('mousedown', (e) => {
+        // Check if we hit the drag handle
+        const target = e.target;
+        if (target.id !== 'drag-handle') return;
+
+        e.preventDefault();
+        cancelSpringBack();
+        dragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        dragStartAz = currentAz;
+        dragStartAx = currentAx;
+        target.style.cursor = 'grabbing';
+        document.body.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        const maxDist = Math.min(window.innerWidth, window.innerHeight) / 2;
+
+        currentAz = clampAngle(dragStartAz + mapDragToAngle(-dx, maxDist));  // negated: reverse L/R
+        currentAx = clampAngle(dragStartAx + mapDragToAngle(-dy, maxDist));  // drag up = tilt back
+
+        requestAnimationFrame(() => render());
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.style.cursor = '';
+
+        if (currentAz !== 0 || currentAx !== 0) {
+            startSpringBack();
+        }
+    });
+
+    // Touch support
+    svgContainer.addEventListener('touchstart', (e) => {
+        const touch = e.touches[0];
+        const el = document.elementFromPoint(touch.clientX, touch.clientY);
+        if (!el || el.id !== 'drag-handle') return;
+
+        e.preventDefault();
+        cancelSpringBack();
+        dragging = true;
+        dragStartX = touch.clientX;
+        dragStartY = touch.clientY;
+        dragStartAz = currentAz;
+        dragStartAx = currentAx;
+    }, { passive: false });
+
+    window.addEventListener('touchmove', (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        const touch = e.touches[0];
+        const dx = touch.clientX - dragStartX;
+        const dy = touch.clientY - dragStartY;
+        const maxDist = Math.min(window.innerWidth, window.innerHeight) / 2;
+
+        currentAz = clampAngle(dragStartAz + mapDragToAngle(-dx, maxDist));  // negated: reverse L/R
+        currentAx = clampAngle(dragStartAx + mapDragToAngle(-dy, maxDist));
+
+        requestAnimationFrame(() => render());
+    }, { passive: false });
+
+    window.addEventListener('touchend', () => {
+        if (!dragging) return;
+        dragging = false;
+        if (currentAz !== 0 || currentAx !== 0) {
+            startSpringBack();
+        }
+    });
+
+    // ================================================================
+    // INIT
+    // ================================================================
+
+    buildPieceData();
+    computeViewBox();
+    render();
     </script>
 </body>
 </html>
