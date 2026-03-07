@@ -11,17 +11,41 @@ Usage:
 
 import argparse
 import json
+import sqlite3
 import subprocess
 import sys
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import urlparse
 
 from normalize import is_connected, is_puzzle_id, parse_piece_id, parse_puzzle_id
 from solve import solve_full
 
+DB_PATH = Path(__file__).resolve().parent / "solve_cache.db"
+
+
+def _init_db():
+    """Create the cache table if it doesn't exist and return a connection."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS solve_cache ("
+        "  piece_ids TEXT PRIMARY KEY,"
+        "  result TEXT NOT NULL"
+        ")"
+    )
+    conn.commit()
+    return conn
+
+
+def _cache_key(piece_ids):
+    """Canonical cache key from a list of piece IDs (order-preserving)."""
+    return ",".join(str(pid) for pid in piece_ids)
+
 
 class PuzzleHandler(SimpleHTTPRequestHandler):
     """Serve static files and handle /api/solve requests."""
+
+    db = None  # set in main()
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -77,6 +101,15 @@ class PuzzleHandler(SimpleHTTPRequestHandler):
                 self._json_error(400, f"Piece {pid} is disconnected")
                 return
 
+        # Check cache
+        key = _cache_key(piece_ids)
+        row = self.db.execute(
+            "SELECT result FROM solve_cache WHERE piece_ids = ?", (key,)
+        ).fetchone()
+        if row:
+            self._json_response(200, json.loads(row[0]))
+            return
+
         try:
             result = solve_full(piece_ids)
         except FileNotFoundError as e:
@@ -88,6 +121,13 @@ class PuzzleHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_error(500, f"Solver error: {e}")
             return
+
+        # Store in cache
+        self.db.execute(
+            "INSERT OR REPLACE INTO solve_cache (piece_ids, result) VALUES (?, ?)",
+            (key, json.dumps(result)),
+        )
+        self.db.commit()
 
         self._json_response(200, result)
 
@@ -116,6 +156,7 @@ def main():
     )
     args = parser.parse_args()
 
+    PuzzleHandler.db = _init_db()
     server = HTTPServer(("", args.port), PuzzleHandler)
     print(f"Serving on http://localhost:{args.port}", file=sys.stderr)
     try:

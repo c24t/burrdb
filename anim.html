@@ -381,6 +381,8 @@
     // LOAD PUZZLE FROM API
     // ================================================================
 
+    const solveCache = new Map();  // pieces string -> API response data
+
     function syncPresetDropdown(inputStr) {
         // Normalize to compare: sort-independent match on trimmed values
         const norm = inputStr.trim().replace(/\s+/g, ' ');
@@ -390,6 +392,15 @@
 
     async function loadPuzzle(inputStr) {
         syncPresetDropdown(inputStr);
+        const cacheKey = inputStr.trim().replace(/\s+/g, ' ');
+
+        // Use cached result if available
+        const cached = solveCache.get(cacheKey);
+        if (cached) {
+            applyPuzzleData(cached);
+            return;
+        }
+
         setStatus('Solving...', 'solving');
         solveBtn.disabled = true;
 
@@ -406,31 +417,36 @@
                 return;
             }
 
-            if (data.solutions.length === 0) {
-                puzzleData = data;
-                clearScene();
-                setStatus(
-                    data.numAssemblies > 0
-                        ? `${data.numAssemblies} assemblies found but none can be disassembled`
-                        : 'No valid assemblies found',
-                    'error'
-                );
-                showPuzzleInfo();
-                playbackGroup.classList.add('hidden');
-                solutionGroup.classList.add('hidden');
-                optionsGroup.classList.add('hidden');
-                return;
-            }
-
-            puzzleData = data;
-            updateSolutionDropdown();
-            loadSolution(0);
-            setStatus('', 'hidden');
+            solveCache.set(cacheKey, data);
+            applyPuzzleData(data);
         } catch (err) {
             setStatus(`Network error: ${err.message}`, 'error');
         } finally {
             solveBtn.disabled = false;
         }
+    }
+
+    function applyPuzzleData(data) {
+        if (data.solutions.length === 0) {
+            puzzleData = data;
+            clearScene();
+            setStatus(
+                data.numAssemblies > 0
+                    ? `${data.numAssemblies} assemblies found but none can be disassembled`
+                    : 'No valid assemblies found',
+                'error'
+            );
+            showPuzzleInfo();
+            playbackGroup.classList.add('hidden');
+            solutionGroup.classList.add('hidden');
+            optionsGroup.classList.add('hidden');
+            return;
+        }
+
+        puzzleData = data;
+        updateSolutionDropdown();
+        loadSolution(0);
+        setStatus('', 'hidden');
     }
 
     function updateSolutionDropdown() {

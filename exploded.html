@@ -797,9 +797,20 @@
     // PUZZLE LOADING
     // ================================================================
 
+    const solveCache = new Map();  // pieces string -> API response data
+
     async function loadPuzzle(piecesStr, name) {
         const svgEl = document.getElementById('svg-container');
         const subtitleEl = document.getElementById('subtitle');
+        const cacheKey = piecesStr.trim().replace(/\s+/g, ' ');
+
+        // Use cached result if available
+        const cached = solveCache.get(cacheKey);
+        if (cached) {
+            applyPuzzleResponse(cached, name);
+            return;
+        }
+
         subtitleEl.textContent = 'Solving\u2026';
         svgEl.classList.add('loading');
 
@@ -822,17 +833,22 @@
                 return;
             }
 
-            allSolutions = data.solutions;
-            solutionIndex = 0;
-            applySolution(allSolutions[0], name);
-            computeViewBox();   // once per puzzle; stable across solutions
-            render();           // re-render with final viewBox
-            updateSolutionNav();
+            solveCache.set(cacheKey, data);
+            applyPuzzleResponse(data, name);
         } catch (err) {
             subtitleEl.textContent = 'Error: ' + err.message;
         } finally {
             svgEl.classList.remove('loading');
         }
+    }
+
+    function applyPuzzleResponse(data, name) {
+        allSolutions = data.solutions;
+        solutionIndex = 0;
+        applySolution(allSolutions[0], name);
+        computeViewBox();
+        render();
+        updateSolutionNav();
     }
 
     // ================================================================
