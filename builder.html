@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Translucent Cube Grid - Piece Masks</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; font-family: sans-serif; touch-action: none; }
+        canvas { display: block; }
+        .ui-overlay { position: absolute; top: 20px; left: 20px; pointer-events: none; color: white; z-index: 10; }
+        .left-sidebar { position: absolute; top: 120px; left: 20px; bottom: 20px; width: 150px; z-index: 20; overflow-y: auto; padding-right: 10px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.2) transparent; }
+        .left-sidebar::-webkit-scrollbar { width: 4px; }
+        .left-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 10px; }
+        .controls-panel { position: absolute; top: 20px; right: 20px; z-index: 20; display: flex; flex-direction: column; gap: 12px; width: 240px; }
+        .component-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .slide-group-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .slide-controls-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+        .controls-hint { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.6); padding: 10px 20px; border-radius: 99px; color: #cbd5e1; font-size: 0.825rem; backdrop-filter: blur(4px); pointer-events: none; text-align: center; white-space: nowrap; }
+        .mask-panel { position: absolute; top: 70px; left: 20px; z-index: 15; pointer-events: none; font-family: monospace; font-size: 0.8rem; background: rgba(15, 23, 42, 0.8); padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px); display: grid; grid-template-columns: 1fr 1fr; gap: x 12px; color: #94a3b8; }
+        .mask-val { color: #fff; font-weight: bold; }
+        button { pointer-events: auto; }
+        .btn-active { border: 2px solid white !important; box-shadow: 0 0 15px rgba(255,255,255,0.3); }
+        .bg-X1 { background-color: #10b981; } .bg-X2 { background-color: #059669; }
+        .bg-Y1 { background-color: #3b82f6; } .bg-Y2 { background-color: #2563eb; }
+        .bg-Z1 { background-color: #f43f5e; } .bg-Z2 { background-color: #e11d48; }
+        .bg-none { background-color: #64748b; }
+        .cube-btn { width: 100%; padding: 6px 8px; border-radius: 6px; color: white; font-size: 0.75rem; font-weight: 600; text-align: center; transition: all 0.2s; border: 1px solid rgba(255,255,255,0.1); text-shadow: 0 1px 2px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; gap: 4px; }
+        .cube-btn:hover:not(:disabled) { transform: scale(1.02); filter: brightness(1.1); }
+        .cube-btn:disabled { opacity: 0.3; cursor: not-allowed; filter: grayscale(0.8); }
+        .membership-dots { display: flex; gap: 4px; justify-content: center; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); transition: all 0.2s; }
+        .dot.active { border-color: white; box-shadow: 0 0 4px white; transform: scale(1.2); }
+        .dot-X1, .dot-X2 { background-color: #10b981; } .dot-Y1, .dot-Y2 { background-color: #3b82f6; } .dot-Z1, .dot-Z2 { background-color: #f43f5e; }
+        .arrow-btn { background-color: #1e293b; color: white; border: 1px solid #334155; border-radius: 4px; padding: 6px 0; font-size: 10px; font-weight: bold; transition: all 0.2s; display: flex; align-items: center; justify-content: center; height: 28px; }
+        .arrow-btn:hover { background-color: #334155; } .arrow-btn:active { background-color: #475569; transform: translateY(1px); }
+        .arrow-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+        .arrow-btn.slide-active { background-color: #0ea5e9; border-color: #38bdf8; box-shadow: 0 0 8px rgba(14, 165, 233, 0.4); }
+        .dyn-arrow { display: inline-block; transition: transform 0.1s linear; font-size: 14px; line-height: 1; }
+        .comp-header { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+        .text-X { color: #34d399; } .text-Y { color: #60a5fa; } .text-Z { color: #fb7185; }
+    </style>
+</head>
+<body>
+
+    <div class="ui-overlay">
+        <h1 class="text-2xl font-bold tracking-tight">Cube Assembly</h1>
+        <p class="text-slate-400 text-sm">Full Exploded View</p>
+    </div>
+
+    <!-- Piece ID Display -->
+    <div id="maskPanel" class="mask-panel">
+        <div>X1: <span id="mask-X1" class="mask-val">#1</span></div>
+        <div>Y1: <span id="mask-Y1" class="mask-val">#1</span></div>
+        <div>Z1: <span id="mask-Z1" class="mask-val">#1</span></div>
+        <div>X2: <span id="mask-X2" class="mask-val">#1</span></div>
+        <div>Y2: <span id="mask-Y2" class="mask-val">#1</span></div>
+        <div>Z2: <span id="mask-Z2" class="mask-val">#1</span></div>
+    </div>
+
+    <div id="cubeControls" class="left-sidebar"></div>
+
+    <div class="controls-panel">
+        <button id="toggleCoords" class="w-full bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-lg flex items-center justify-center gap-2 border border-slate-700">
+            Toggle Labels
+        </button>
+
+        <div class="bg-slate-900/80 backdrop-blur-md p-3 rounded-xl border border-slate-800 shadow-2xl">
+            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 px-1">Visibility</p>
+            <div class="component-grid">
+                <button onclick="toggleComponent('X1')" id="btn-X1" class="bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/30 py-1 rounded text-xs font-bold transition-all">X1</button>
+                <button onclick="toggleComponent('X2')" id="btn-X2" class="bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/30 py-1 rounded text-xs font-bold transition-all">X2</button>
+                <button onclick="toggleComponent('Y1')" id="btn-Y1" class="bg-blue-500/20 hover:bg-blue-500/40 text-blue-300 border border-blue-500/30 py-1 rounded text-xs font-bold transition-all">Y1</button>
+                <button onclick="toggleComponent('Y2')" id="btn-Y2" class="bg-blue-500/20 hover:bg-blue-500/40 text-blue-300 border border-blue-500/30 py-1 rounded text-xs font-bold transition-all">Y2</button>
+                <button onclick="toggleComponent('Z1')" id="btn-Z1" class="bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 border border-rose-500/30 py-1 rounded text-xs font-bold transition-all">Z1</button>
+                <button onclick="toggleComponent('Z2')" id="btn-Z2" class="bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 border border-rose-500/30 py-1 rounded text-xs font-bold transition-all">Z2</button>
+            </div>
+            <button id="btn-visibility-toggle" onclick="toggleVisibility()" class="w-full mt-3 text-xs font-bold text-white transition-colors bg-slate-700 hover:bg-slate-600 py-2 rounded shadow-md border border-slate-600">Hide All</button>
+        </div>
+
+        <div class="bg-slate-900/80 backdrop-blur-md p-3 rounded-xl border border-slate-800 shadow-2xl">
+            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 px-1">3D Manipulation</p>
+            <div id="slideControlsContainer" class="slide-group-grid"></div>
+            <button id="btn-explode-toggle" onclick="toggleExplode()" class="w-full mt-3 text-xs font-bold text-white transition-colors bg-slate-700 hover:bg-slate-600 py-2 rounded shadow-md border border-slate-600">Explode</button>
+        </div>
+    </div>
+
+    <div class="controls-hint">
+        Assign: Click • Explode: 'X' • Vis: 'V' • View: 0-4
+    </div>
+
+    <script>
+        const GRID_SIZE = 4;
+        const CUBE_SIZE = 1.0;
+        const SPACING = 1.2;
+        const OFFSET = ( (GRID_SIZE - 1) * SPACING ) / 2;
+
+        let scene, camera, renderer, cubeGroup;
+        let targetRotationX = 0.5, targetRotationY = 0.5;
+        let lastMouseX = 0, lastMouseY = 0, isDragging = false;
+        let showCoords = false;
+        let startX = 0, startY = 0;
+        let lastTouchDistance = 0;
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        let textMeshes = [];
+
+        const targetOffsets = {
+            'X1': new THREE.Vector3(0, 0, 0), 'X2': new THREE.Vector3(0, 0, 0),
+            'Y1': new THREE.Vector3(0, 0, 0), 'Y2': new THREE.Vector3(0, 0, 0),
+            'Z1': new THREE.Vector3(0, 0, 0), 'Z2': new THREE.Vector3(0, 0, 0)
+        };
+
+        const slideState = { 'X1': null, 'X2': null, 'Y1': null, 'Y2': null, 'Z1': null, 'Z2': null };
+
+        const slideActions = {
+            'X1': { labelClass: 'text-X', label: 'X1 (Bot)', left: { axis: 'x', val: -6 }, middle: { axis: 'y', val: -3 }, right: { axis: 'x', val: 6 } },
+            'X2': { labelClass: 'text-X', label: 'X2 (Top)', left: { axis: 'x', val: -6 }, middle: { axis: 'y', val: 3 }, right: { axis: 'x', val: 6 } },
+            'Y1': { labelClass: 'text-Y', label: 'Y1 (Left)', left: { axis: 'y', val: -6 }, middle: { axis: 'z', val: -3 }, right: { axis: 'y', val: 6 } },
+            'Y2': { labelClass: 'text-Y', label: 'Y2 (Right)', left: { axis: 'y', val: -6 }, middle: { axis: 'z', val: 3 }, right: { axis: 'y', val: 6 } },
+            'Z1': { labelClass: 'text-Z', label: 'Z1 (Left)', left: { axis: 'z', val: -6 }, middle: { axis: 'x', val: -3 }, right: { axis: 'z', val: 6 } },
+            'Z2': { labelClass: 'text-Z', label: 'Z2 (Right)', left: { axis: 'z', val: -6 }, middle: { axis: 'x', val: 3 }, right: { axis: 'z', val: 6 } }
+        };
+
+        const componentColors = {
+            'X1': 0x10b981, 'X2': 0x10b981, 'Y1': 0x3b82f6, 'Y2': 0x3b82f6, 'Z1': 0xf43f5e, 'Z2': 0xf43f5e, 'none': 0x64748b
+        };
+
+        const visibleComponents = {
+            'X1': true, 'X2': true, 'Y1': true, 'Y2': true, 'Z1': true, 'Z2': true, 'none': true
+        };
+        const COMP_KEYS = ['X1', 'X2', 'Y1', 'Y2', 'Z1', 'Z2'];
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 18);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const p1 = new THREE.PointLight(0x6366f1, 1); p1.position.set(10, 10, 10); scene.add(p1);
+            const p2 = new THREE.PointLight(0xec4899, 0.8); p2.position.set(-10, -10, 10); scene.add(p2);
+            const p3 = new THREE.DirectionalLight(0xffffff, 0.5); p3.position.set(0, 10, 5); scene.add(p3);
+
+            cubeGroup = new THREE.Group();
+            createGrid();
+            scene.add(cubeGroup);
+
+            setupControlsUI();
+            setupEvents();
+            updateMasks(); // Init masks
+            animate();
+        }
+
+        // --- Piece ID Calculation ---
+
+        // Standard BIT_MAP (von Känel / Cutler numbering, matches viz.html / normalize.py)
+        // Maps bit index (0-11) to piece-local coords (x=0..5, y=0..1, z=0..1)
+        const BIT_MAP = [
+            {x: 1, y: 1, z: 1}, {x: 2, y: 1, z: 1}, {x: 3, y: 1, z: 1}, {x: 4, y: 1, z: 1}, // Bits 0-3 (Top Back)
+            {x: 1, y: 0, z: 1}, {x: 2, y: 0, z: 1}, {x: 3, y: 0, z: 1}, {x: 4, y: 0, z: 1}, // Bits 4-7 (Top Front)
+            {x: 2, y: 1, z: 0}, {x: 3, y: 1, z: 0},                                           // Bits 8-9 (Bottom Back)
+            {x: 2, y: 0, z: 0}, {x: 3, y: 0, z: 0}                                            // Bits 10-11 (Bottom Front)
+        ];
+
+        // Maps piece-local coords (px,py,pz) to grid coords for each component.
+        // Each pair's second piece is rotated 180° around the long axis: (y,z) → (1-y, 1-z)
+        const PIECE_TO_GRID = {
+            'X1': (px, py, pz) => ({ x: px - 1, y: py,     z: pz + 1 }),
+            'X2': (px, py, pz) => ({ x: px - 1, y: 3 - py, z: 2 - pz }),
+            'Y1': (px, py, pz) => ({ x: 2 - py, y: px - 1, z: pz }),
+            'Y2': (px, py, pz) => ({ x: 1 + py, y: px - 1, z: 3 - pz }),
+            'Z1': (px, py, pz) => ({ x: py,     y: pz + 1, z: px - 1 }),
+            'Z2': (px, py, pz) => ({ x: 3 - py, y: 2 - pz, z: px - 1 })
+        };
+
+        // Grid positions always owned by a specific component (ghost extensions)
+        const fixedRegions = [
+            { owner: 'X1', x: [0,0], y: [0,0], z: [1,2] }, { owner: 'X1', x: [3,3], y: [0,0], z: [1,2] },
+            { owner: 'X2', x: [0,0], y: [3,3], z: [1,2] }, { owner: 'X2', x: [3,3], y: [3,3], z: [1,2] },
+            { owner: 'Y1', x: [1,2], y: [0,0], z: [0,0] }, { owner: 'Y1', x: [1,2], y: [3,3], z: [0,0] },
+            { owner: 'Y2', x: [1,2], y: [0,0], z: [3,3] }, { owner: 'Y2', x: [1,2], y: [3,3], z: [3,3] },
+            { owner: 'Z1', x: [0,0], y: [1,2], z: [0,0] }, { owner: 'Z1', x: [0,0], y: [1,2], z: [3,3] },
+            { owner: 'Z2', x: [3,3], y: [1,2], z: [0,0] }, { owner: 'Z2', x: [3,3], y: [1,2], z: [3,3] }
+        ];
+
+        const inRange = (val, range) => val >= range[0] && val <= range[1];
+
+        function updateMasks() {
+            Object.keys(PIECE_TO_GRID).forEach(comp => {
+                const mapFn = PIECE_TO_GRID[comp];
+                let bitmap = 0;
+
+                for (let i = 0; i < BIT_MAP.length; i++) {
+                    const piecePos = BIT_MAP[i];
+                    const gridPos = mapFn(piecePos.x, piecePos.y, piecePos.z);
+                    let isSolid = false;
+
+                    // Check fixed regions (ghost extensions)
+                    let fixedOwner = null;
+                    for (const region of fixedRegions) {
+                        if (inRange(gridPos.x, region.x) && inRange(gridPos.y, region.y) && inRange(gridPos.z, region.z)) {
+                            fixedOwner = region.owner;
+                            break;
+                        }
+                    }
+
+                    if (fixedOwner) {
+                        isSolid = (fixedOwner === comp);
+                    } else {
+                        const cube = cubeGroup.children.find(c =>
+                            !c.userData.isGhostExtension &&
+                            c.userData.gridPos &&
+                            c.userData.gridPos.x === gridPos.x &&
+                            c.userData.gridPos.y === gridPos.y &&
+                            c.userData.gridPos.z === gridPos.z
+                        );
+                        if (cube) {
+                            isSolid = (cube.userData.assignedComponent === comp);
+                        }
+                    }
+
+                    if (!isSolid) {
+                        bitmap |= (1 << i);
+                    }
+                }
+
+                const pieceId = bitmap + 1;
+                const el = document.getElementById(`mask-${comp}`);
+                if (el) {
+                    el.innerText = `#${pieceId}`;
+                }
+            });
+        }
+
+        function setupControlsUI() {
+            const container = document.getElementById('slideControlsContainer');
+            Object.keys(slideActions).forEach(comp => {
+                const config = slideActions[comp];
+                const div = document.createElement('div');
+                div.innerHTML = `
+                    <p class="comp-header ${config.labelClass}">${config.label}</p>
+                    <div class="slide-controls-row">
+                        <button id="btn-${comp}-left" class="arrow-btn" onclick="handleSlide('${comp}', 'left')">
+                            <span id="arrow-${comp}-left" class="dyn-arrow">➜</span>
+                        </button>
+                        <button id="btn-${comp}-middle" class="arrow-btn" onclick="handleSlide('${comp}', 'middle')">
+                            <span id="arrow-${comp}-middle" class="dyn-arrow">➜</span>
+                        </button>
+                        <button id="btn-${comp}-right" class="arrow-btn" onclick="handleSlide('${comp}', 'right')">
+                            <span id="arrow-${comp}-right" class="dyn-arrow">➜</span>
+                        </button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function setupEvents() {
+            document.getElementById('toggleCoords').addEventListener('click', (e) => {
+                e.stopPropagation(); showCoords = !showCoords; updateLabels();
+            });
+            window.addEventListener('resize', onWindowResize, false);
+            document.addEventListener('wheel', (e) => {
+                camera.position.z = Math.min(Math.max(camera.position.z + e.deltaY * 0.01, 5), 40);
+            }, { passive: true });
+
+            renderer.domElement.addEventListener('mousedown', onStart);
+            renderer.domElement.addEventListener('mouseup', onEnd);
+            renderer.domElement.addEventListener('mousemove', onMove);
+            renderer.domElement.addEventListener('touchstart', (e) => onStart(e), { passive: false });
+            renderer.domElement.addEventListener('touchmove', (e) => onMove(e), { passive: false });
+            renderer.domElement.addEventListener('touchend', (e) => onEnd(e));
+
+            document.addEventListener('keydown', (e) => {
+                const key = e.key.toLowerCase();
+                if (key === 'x') toggleExplode();
+                if (key === 'v') toggleVisibility();
+                switch(key) {
+                    case '0': targetRotationX = 0.5; targetRotationY = 0.5; break;
+                    case '1': targetRotationX = 0; targetRotationY = Math.PI / 2; break;
+                    case '2': targetRotationX = Math.PI / 2; targetRotationY = 0; break;
+                    case '3': targetRotationX = 0; targetRotationY = 0; break;
+                    case '4': targetRotationX = Math.atan(Math.SQRT1_2); targetRotationY = Math.PI / 4; break;
+                }
+            });
+        }
+
+        function onStart(e) {
+            const evt = (e.touches) ? e.touches[0] : e;
+            isDragging = true;
+            lastMouseX = evt.clientX;
+            lastMouseY = evt.clientY;
+            startX = evt.clientX;
+            startY = evt.clientY;
+            if (e.touches && e.touches.length === 2) {
+                lastTouchDistance = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            }
+        }
+
+        function onMove(e) {
+            if (!isDragging) return;
+            if(e.touches) e.preventDefault();
+            const evt = (e.touches) ? e.touches[0] : e;
+
+            if (e.touches && e.touches.length === 2) {
+                const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                camera.position.z = Math.min(Math.max(camera.position.z + (lastTouchDistance - dist) * 0.05, 5), 40);
+                lastTouchDistance = dist;
+                return;
+            }
+
+            targetRotationY += (evt.clientX - lastMouseX) * 0.005;
+            targetRotationX += (evt.clientY - lastMouseY) * 0.005;
+            lastMouseX = evt.clientX;
+            lastMouseY = evt.clientY;
+        }
+
+        function onEnd(e) {
+            isDragging = false;
+            const evt = (e.changedTouches) ? e.changedTouches[0] : e;
+            const dx = evt.clientX - startX;
+            const dy = evt.clientY - startY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < 5) handle3DClick(evt.clientX, evt.clientY);
+        }
+
+        function handle3DClick(clientX, clientY) {
+            mouse.x = (clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(cubeGroup.children, false);
+            if (intersects.length > 0) {
+                // Find first object that has visible material
+                const hit = intersects.find(i => i.object.material && i.object.material.visible === true);
+                if (hit && hit.object.userData.id) {
+                    cycleCubeMembership(hit.object.userData.id);
+                }
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        window.toggleExplode = function() {
+            const allExploded = Object.values(slideState).every(s => s === 'middle');
+            if (allExploded) {
+                resetSlides();
+            } else {
+                Object.keys(slideActions).forEach(comp => {
+                    const config = slideActions[comp]['middle'];
+                    const vec = targetOffsets[comp];
+                    vec.set(0,0,0);
+                    if (config.axis === 'x') vec.x = config.val;
+                    if (config.axis === 'y') vec.y = config.val;
+                    if (config.axis === 'z') vec.z = config.val;
+                    slideState[comp] = 'middle';
+                    updateSlideUI(comp);
+                });
+                updateExplodeButtonState();
+            }
+        };
+
+        window.updateExplodeButtonState = function() {
+            const allExploded = Object.values(slideState).every(s => s === 'middle');
+            const btn = document.getElementById('btn-explode-toggle');
+            if (btn) {
+                btn.innerText = allExploded ? "Collapse" : "Explode";
+                if (allExploded) {
+                    btn.classList.add('bg-slate-600', 'text-emerald-300');
+                    btn.classList.remove('bg-slate-700', 'text-white');
+                } else {
+                    btn.classList.add('bg-slate-700', 'text-white');
+                    btn.classList.remove('bg-slate-600', 'text-emerald-300');
+                }
+            }
+        };
+
+        window.toggleVisibility = function() {
+            // Check if ALL components are visible
+            const allVisible = COMP_KEYS.every(k => visibleComponents[k]);
+
+            // Logic:
+            // If All currently Visible -> Hide All (targetState = false).
+            // If ANY are Hidden (mixed or all hidden) -> Show All (targetState = true).
+            const targetState = !allVisible;
+
+            COMP_KEYS.forEach(k => {
+                visibleComponents[k] = targetState;
+                const btn = document.getElementById(`btn-${k}`);
+                if(targetState) {
+                     btn.style.opacity = "1"; btn.classList.remove('line-through', 'opacity-50');
+                } else {
+                     btn.style.opacity = "0.4"; btn.classList.add('line-through');
+                }
+            });
+            updateMaterials();
+            updateVisibilityButtonState();
+        };
+
+        window.updateVisibilityButtonState = function() {
+            const allVisible = COMP_KEYS.every(k => visibleComponents[k]);
+            const btn = document.getElementById('btn-visibility-toggle');
+            if (btn) {
+                if (allVisible) {
+                    btn.innerText = "Hide All";
+                    btn.classList.add('bg-slate-600', 'text-emerald-300');
+                    btn.classList.remove('bg-slate-700', 'text-white');
+                } else {
+                    btn.innerText = "Show All";
+                    btn.classList.add('bg-slate-700', 'text-white');
+                    btn.classList.remove('bg-slate-600', 'text-emerald-300');
+                }
+            }
+        };
+
+        window.handleSlide = function(component, position) {
+            const currentState = slideState[component];
+            const actionConfig = slideActions[component][position];
+            const offsetVector = targetOffsets[component];
+
+            if (currentState === null) {
+                offsetVector.set(0,0,0);
+                if (actionConfig.axis === 'x') offsetVector.x = actionConfig.val;
+                if (actionConfig.axis === 'y') offsetVector.y = actionConfig.val;
+                if (actionConfig.axis === 'z') offsetVector.z = actionConfig.val;
+                slideState[component] = position;
+                updateSlideUI(component);
+            } else if (currentState === position) {
+                offsetVector.set(0, 0, 0);
+                slideState[component] = null;
+                updateSlideUI(component);
+            }
+            updateExplodeButtonState();
+        };
+
+        window.updateSlideUI = function(component) {
+            const currentState = slideState[component];
+            const positions = ['left', 'middle', 'right'];
+            positions.forEach(pos => {
+                const btn = document.getElementById(`btn-${component}-${pos}`);
+                const arrowId = `arrow-${component}-${pos}`;
+                if (currentState === null) {
+                    btn.disabled = false;
+                    btn.classList.remove('slide-active');
+                    btn.innerHTML = `<span id="${arrowId}" class="dyn-arrow">➜</span>`;
+                } else if (currentState === pos) {
+                    btn.disabled = false;
+                    btn.classList.add('slide-active');
+                    btn.innerHTML = '✕';
+                } else {
+                    btn.disabled = true;
+                    btn.classList.remove('slide-active');
+                    btn.innerHTML = `<span id="${arrowId}" class="dyn-arrow">➜</span>`;
+                }
+            });
+        };
+
+        window.resetSlides = function() {
+            Object.keys(targetOffsets).forEach(k => targetOffsets[k].set(0,0,0));
+            Object.keys(slideState).forEach(k => {
+                slideState[k] = null;
+                updateSlideUI(k);
+            });
+            updateExplodeButtonState();
+        };
+
+        function updateDynamicArrows() {
+            camera.updateMatrixWorld();
+            const projScreenMatrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+            const positions = ['left', 'middle', 'right'];
+            Object.keys(slideActions).forEach(comp => {
+                positions.forEach(pos => {
+                    const config = slideActions[comp][pos];
+                    const arrowEl = document.getElementById(`arrow-${comp}-${pos}`);
+                    if (!arrowEl) return;
+
+                    const vec = new THREE.Vector3(0,0,0);
+                    if (config.axis === 'x') vec.x = config.val;
+                    if (config.axis === 'y') vec.y = config.val;
+                    if (config.axis === 'z') vec.z = config.val;
+                    vec.normalize();
+                    vec.applyEuler(cubeGroup.rotation);
+
+                    const origin = new THREE.Vector3(0,0,0).applyMatrix4(projScreenMatrix);
+                    const tip = vec.clone().applyMatrix4(projScreenMatrix);
+                    const dx = tip.x - origin.x;
+                    const dy = -(tip.y - origin.y);
+                    const angle = Math.atan2(dy, dx);
+                    arrowEl.style.transform = `rotate(${angle}rad)`;
+                });
+            });
+        }
+
+        function getMembership(x, y, z) {
+            const belongs = [];
+            if (y >= 0 && y <= 1 && z >= 1 && z <= 2) belongs.push('X1');
+            if (y >= 2 && y <= 3 && z >= 1 && z <= 2) belongs.push('X2');
+            if (x >= 1 && x <= 2 && z >= 0 && z <= 1) belongs.push('Y1');
+            if (x >= 1 && x <= 2 && z >= 2 && z <= 3) belongs.push('Y2');
+            if (x >= 0 && x <= 1 && y >= 1 && y <= 2) belongs.push('Z1');
+            if (x >= 2 && x <= 3 && y >= 1 && y <= 2) belongs.push('Z2');
+            return belongs;
+        }
+
+        function createGrid() {
+            while(cubeGroup.children.length > 0) cubeGroup.remove(cubeGroup.children[0]);
+            textMeshes = [];
+            document.getElementById('cubeControls').innerHTML = '<p class="text-xs text-slate-400 mb-2 pl-1">Assignments:</p>';
+
+            let x1LeftExtCreated = false, x1RightExtCreated = false;
+            let x2LeftExtCreated = false, x2RightExtCreated = false;
+            let y1BotExtCreated = false, y1TopExtCreated = false;
+            let y2BotExtCreated = false, y2TopExtCreated = false;
+            let z1FrontExtCreated = false, z1BackExtCreated = false;
+            let z2FrontExtCreated = false, z2BackExtCreated = false;
+
+            for (let x = 0; x < GRID_SIZE; x++) {
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    for (let z = 0; z < GRID_SIZE; z++) {
+                        const isCorner = (x === 0 || x === 3) && (y === 0 || y === 3) && (z === 0 || z === 3);
+                        if (isCorner) continue;
+
+                        // X1 Extensions
+                        if (x === 0 && y === 0 && (z === 1 || z === 2)) { if (!x1LeftExtCreated) { createX1LeftExtension(); x1LeftExtCreated = true; } continue; }
+                        if (x === 3 && y === 0 && (z === 1 || z === 2)) { if (!x1RightExtCreated) { createX1RightExtension(); x1RightExtCreated = true; } continue; }
+
+                        // X2 Extensions
+                        if (x === 0 && y === 3 && (z === 1 || z === 2)) { if (!x2LeftExtCreated) { createX2LeftExtension(); x2LeftExtCreated = true; } continue; }
+                        if (x === 3 && y === 3 && (z === 1 || z === 2)) { if (!x2RightExtCreated) { createX2RightExtension(); x2RightExtCreated = true; } continue; }
+
+                        // Y1 Extensions (x=1..2, y=0..3, z=0..1) - Replacing z=0 at y=0,3
+                        if ((x === 1 || x === 2) && y === 0 && z === 0) { if (!y1BotExtCreated) { createY1Extension('bot'); y1BotExtCreated = true; } continue; }
+                        if ((x === 1 || x === 2) && y === 3 && z === 0) { if (!y1TopExtCreated) { createY1Extension('top'); y1TopExtCreated = true; } continue; }
+
+                        // Y2 Extensions (x=1..2, y=0..3, z=2..3) - Replacing z=3 at y=0,3
+                        if ((x === 1 || x === 2) && y === 0 && z === 3) { if (!y2BotExtCreated) { createY2Extension('bot'); y2BotExtCreated = true; } continue; }
+                        if ((x === 1 || x === 2) && y === 3 && z === 3) { if (!y2TopExtCreated) { createY2Extension('top'); y2TopExtCreated = true; } continue; }
+
+                        // Z1 Extensions (x=0..1, y=1..2, z=0..3)
+                        if (x === 0 && (y === 1 || y === 2) && z === 0) { if (!z1FrontExtCreated) { createZ1Extension('front'); z1FrontExtCreated = true; } continue; }
+                        if (x === 0 && (y === 1 || y === 2) && z === 3) { if (!z1BackExtCreated) { createZ1Extension('back'); z1BackExtCreated = true; } continue; }
+
+                        // Z2 Extensions (x=2..3, y=1..2, z=0..3)
+                        if (x === 3 && (y === 1 || y === 2) && z === 0) { if (!z2FrontExtCreated) { createZ2Extension('front'); z2FrontExtCreated = true; } continue; }
+                        if (x === 3 && (y === 1 || y === 2) && z === 3) { if (!z2BackExtCreated) { createZ2Extension('back'); z2BackExtCreated = true; } continue; }
+
+                        createStandardCube(x, y, z);
+                    }
+                }
+            }
+        }
+
+        // --- Helper to convert Index to World Coords ---
+        function idx(i) { return i * SPACING - OFFSET; }
+        // min/max for a 1-unit block centered at index i
+        function min(i) { return idx(i) - 0.5; }
+        function max(i) { return idx(i) + 0.5; }
+
+        function createX2LeftExtension() {
+            const shape = new THREE.Shape();
+            const x_min = -1 * SPACING - OFFSET - 0.5, x_mid = -1 * SPACING - OFFSET + 0.5, x_max = 0 * SPACING - OFFSET + 0.5;
+            const y_min = 2 * SPACING - OFFSET - 0.5, y_mid = 2 * SPACING - OFFSET + 0.5, y_max = 3 * SPACING - OFFSET + 0.5;
+            // L-shape: full at x=-1 (y=2..3), only y=3 at x=0. Notch at lower-right.
+            shape.moveTo(x_min, y_min); shape.lineTo(x_min, y_max); shape.lineTo(x_max, y_max); shape.lineTo(x_max, y_mid); shape.lineTo(x_mid, y_mid); shape.lineTo(x_mid, y_min); shape.lineTo(x_min, y_min);
+            const z_min = 1 * SPACING - OFFSET - 0.5;
+            createExtensionGhost(shape, SPACING + CUBE_SIZE, 0, 0, z_min, 'X2');
+        }
+
+        function createX2RightExtension() {
+            const shape = new THREE.Shape();
+            const x3_min = 3 * SPACING - OFFSET - 0.5, x3_max = 3 * SPACING - OFFSET + 0.5, x4_max = 4 * SPACING - OFFSET + 0.5;
+            const y2_min = 2 * SPACING - OFFSET - 0.5, y2_max = 2 * SPACING - OFFSET + 0.5, y3_max = 3 * SPACING - OFFSET + 0.5;
+            // L-shape: full at x=4 (y=2..3), only y=3 at x=3. Notch at lower-left.
+            shape.moveTo(x3_min, y3_max); shape.lineTo(x4_max, y3_max); shape.lineTo(x4_max, y2_min); shape.lineTo(x3_max, y2_min); shape.lineTo(x3_max, y2_max); shape.lineTo(x3_min, y2_max); shape.lineTo(x3_min, y3_max);
+            const z_min = 1 * SPACING - OFFSET - 0.5;
+            createExtensionGhost(shape, SPACING + CUBE_SIZE, 0, 0, z_min, 'X2');
+        }
+
+        function createExtensionGhost(shape, depth, x, y, z, compName, extrudeSettings) {
+            const geometry = new THREE.ExtrudeGeometry(shape, { depth: depth, bevelEnabled: false, ...extrudeSettings });
+            geometry.translate(x, y, z);
+            const material = new THREE.MeshBasicMaterial({ visible: false });
+            const mesh = new THREE.Mesh(geometry, material);
+            const lines = new THREE.LineSegments(
+                new THREE.EdgesGeometry(geometry),
+                new THREE.LineBasicMaterial({ color: componentColors[compName], transparent: true, opacity: 0.5 })
+            );
+            lines.name = "edges";
+            mesh.add(lines);
+            mesh.userData = { assignedComponent: compName, isGhostExtension: true, basePos: new THREE.Vector3(0, 0, 0) };
+            cubeGroup.add(mesh);
+        }
+
+        // --- Manual Mesh Construction Helper ---
+        // Builds a geometry from vertices (triplets) and indices
+        function createManualMesh(vertices, color, name) {
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+            // Helper to make box params
+            const makeBox = (x1, x2, y1, y2, z1, z2) => {
+                const w = x2 - x1; const h = y2 - y1; const d = z2 - z1;
+                const g = new THREE.BoxGeometry(w, h, d);
+                g.translate(x1 + w/2, y1 + h/2, z1 + d/2);
+                return g;
+            };
+
+            return { makeBox };
+        }
+
+        // Generic function to build merged ghost extension
+        function buildYExtension(boxes, color, name) {
+            // boxes is array of {x1,x2, y1,y2, z1,z2}
+
+            const points = [];
+
+            const { x_min, x_max, y_bot, y_shelf, y_top, z_front, z_mid, z_back } = boxes;
+
+            // Profile Vertices (in YZ plane)
+            const v = [
+                new THREE.Vector3(0, y_bot, z_front), // 0: Bottom-Front-Left (Base)
+                new THREE.Vector3(0, y_bot, z_back),  // 1: Bottom-Back-Left
+                new THREE.Vector3(0, y_shelf, z_back),// 2: Shelf-Back-Left
+                new THREE.Vector3(0, y_shelf, z_mid), // 3: Shelf-Mid-Left (Notch inner)
+                new THREE.Vector3(0, y_top, z_mid),   // 4: Top-Mid-Left (Notch outer) - Wait.
+                new THREE.Vector3(0, y_top, z_front)  // 5: Top-Front-Left
+            ];
+
+            // 4 corresponds to (y_top, z_mid).
+
+            const vertices = [];
+
+            // Helper to push line
+            const addLine = (p1, p2) => {
+                vertices.push(p1.x, p1.y, p1.z);
+                vertices.push(p2.x, p2.y, p2.z);
+            };
+
+            // Edges on Left Face (x_min)
+            for(let i=0; i<6; i++) {
+                const p1 = v[i].clone(); p1.x = x_min;
+                const p2 = v[(i+1)%6].clone(); p2.x = x_min;
+                addLine(p1, p2);
+            }
+            // Edges on Right Face (x_max)
+            for(let i=0; i<6; i++) {
+                const p1 = v[i].clone(); p1.x = x_max;
+                const p2 = v[(i+1)%6].clone(); p2.x = x_max;
+                addLine(p1, p2);
+            }
+            // Connecting Edges (Left to Right)
+            for(let i=0; i<6; i++) {
+                const p1 = v[i].clone(); p1.x = x_min;
+                const p2 = v[i].clone(); p2.x = x_max;
+                addLine(p1, p2);
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+            const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ visible: false }));
+
+            const lineMat = new THREE.LineBasicMaterial({ color: componentColors[color], transparent: true, opacity: 0.5 });
+            const lines = new THREE.LineSegments(geometry, lineMat);
+            lines.name = "edges";
+            mesh.add(lines);
+
+            mesh.userData = { assignedComponent: color, isGhostExtension: true, basePos: new THREE.Vector3(0, 0, 0) };
+            cubeGroup.add(mesh);
+        }
+
+        function createX1LeftExtension() {
+            const shape = new THREE.Shape();
+            const x_min = -1 * SPACING - OFFSET - 0.5, x_mid = -1 * SPACING - OFFSET + 0.5, x_max = 0 * SPACING - OFFSET + 0.5;
+            const y_min = 0 * SPACING - OFFSET - 0.5, y_mid = 0 * SPACING - OFFSET + 0.5, y_max = 1 * SPACING - OFFSET + 0.5;
+            shape.moveTo(x_min, y_max); shape.lineTo(x_min, y_min); shape.lineTo(x_max, y_min); shape.lineTo(x_max, y_mid); shape.lineTo(x_mid, y_mid); shape.lineTo(x_mid, y_max); shape.lineTo(x_min, y_max);
+            const z_min = 1 * SPACING - OFFSET - 0.5;
+            createExtensionGhost(shape, SPACING + CUBE_SIZE, 0, 0, z_min, 'X1');
+        }
+
+        function createX1RightExtension() {
+            const shape = new THREE.Shape();
+            const x3_min = 3 * SPACING - OFFSET - 0.5, x3_max = 3 * SPACING - OFFSET + 0.5, x4_max = 4 * SPACING - OFFSET + 0.5;
+            const y0_min = 0 * SPACING - OFFSET - 0.5, y0_max = 0 * SPACING - OFFSET + 0.5, y1_max = 1 * SPACING - OFFSET + 0.5;
+            shape.moveTo(x3_min, y0_min); shape.lineTo(x4_max, y0_min); shape.lineTo(x4_max, y1_max); shape.lineTo(x3_max, y1_max); shape.lineTo(x3_max, y0_max); shape.lineTo(x3_min, y0_max); shape.lineTo(x3_min, y0_min);
+            const z_min = 1 * SPACING - OFFSET - 0.5;
+            createExtensionGhost(shape, SPACING + CUBE_SIZE, 0, 0, z_min, 'X1');
+        }
+
+        function createY1Extension(side) {
+            // Y1: x=1..2.
+            const x_min = min(1);
+            const x_max = max(2); // Spans gap!
+
+            let y_bot, y_shelf, y_top;
+            let z_front, z_mid, z_back;
+
+            if (side === 'bot') {
+                // Base: y=-1 (Full Z 0..1). Tip: y=0 (Z=0 only).
+                y_bot = min(-1);
+                y_shelf = min(0); // Top of Base / Bottom of Tip
+                y_top = max(0);
+
+                z_front = min(0);
+                z_mid = max(0);   // End of Tip
+                z_back = max(1);  // End of Base
+            } else {
+                // Top Extension: Base y=4 (Full Z). Tip y=3 (Z=0 only).
+                // Vertices order: Y needs to go up? Y4 is top. Y3 is bot.
+                // Base is at top. Tip is below it.
+                // We define profile Y coords:
+                y_bot = min(3);   // Bottom of Tip
+                y_shelf = max(3); // Top of Tip / Bottom of Base
+                y_top = max(4);   // Top of Base
+
+                // Z coords same: Tip at Z=0. Base at Z=0..1.
+                z_front = min(0);
+                z_mid = max(0);
+                z_back = max(1);
+
+                // Shape logic in buildYExtension assumes standard L (Base at bottom).
+                // Since Base is at Top here, we need to adjust points.
+                // The "Notch" is at (z_mid, y_shelf).
+                // The L looks inverted.
+                // Let's pass the 6 profile points explicitly to handle this.
+            }
+
+            // Standard L (Bot): (z_f, y_t) -> (z_f, y_b) -> (z_bk, y_b) -> (z_bk, y_s) -> (z_m, y_s) -> (z_m, y_t)
+            let pts = [];
+            if (side === 'bot') {
+                pts = [
+                    new THREE.Vector3(0, y_top, z_front), // Top-Front
+                    new THREE.Vector3(0, y_bot, z_front), // Bot-Front
+                    new THREE.Vector3(0, y_bot, z_back),  // Bot-Back
+                    new THREE.Vector3(0, y_shelf, z_back),// Shelf-Back
+                    new THREE.Vector3(0, y_shelf, z_mid), // Shelf-Mid
+                    new THREE.Vector3(0, y_top, z_mid)    // Top-Mid
+                ];
+            } else {
+                // Top (Inverted L):
+                // Top-Front (y_top, z_front) -> Bot-Front (y_bot, z_front) -> Bot-Mid (y_bot, z_mid) -> Shelf-Mid (y_shelf, z_mid) -> Shelf-Back (y_shelf, z_back) -> Top-Back (y_top, z_back)
+                pts = [
+                    new THREE.Vector3(0, y_top, z_front),
+                    new THREE.Vector3(0, y_bot, z_front),
+                    new THREE.Vector3(0, y_bot, z_mid),
+                    new THREE.Vector3(0, y_shelf, z_mid),
+                    new THREE.Vector3(0, y_shelf, z_back),
+                    new THREE.Vector3(0, y_top, z_back)
+                ];
+            }
+
+            buildManualExtension(pts, x_min, x_max, 'Y1');
+        }
+
+        function createY2Extension(side) {
+            const x_min = min(1);
+            const x_max = max(2);
+
+            let y_bot, y_shelf, y_top;
+            let z_front, z_mid, z_back;
+
+            // Y2 is at Z=2,3.
+            // Unassignable at y=0 is at z=3 (Outer).
+            // So Tip is at Z=3. Base (y=-1 or 4) is Z=2..3.
+            // Z Coords:
+            // "Front" here is Z=3 (visually back, but conceptually tip).
+            // "Back" here is Z=2 (visually front).
+            // Let's use numeric:
+            // Tip range: min(3)..max(3).
+            // Base range: min(2)..max(3).
+
+            const z_tip_start = min(3);
+            const z_tip_end = max(3);
+            const z_base_start = min(2);
+            // z_base_end == z_tip_end = max(3).
+
+            let pts = [];
+
+            if (side === 'bot') {
+                // Base y=-1. Tip y=0.
+                y_bot = min(-1);
+                y_shelf = min(0);
+                y_top = max(0);
+
+                // L-shape profile in YZ.
+                // Tip at y=0 (y_shelf..y_top) covers z=3.
+                // Base at y=-1 (y_bot..y_shelf) covers z=2..3.
+
+                // Vertices loop (Counter-Clockwise in YZ?):
+                // 1. (y_top, z_tip_end) -> Top-Right
+                // 2. (y_top, z_tip_start) -> Top-Left of Tip
+                // 3. (y_shelf, z_tip_start) -> Bot-Left of Tip (Notch corner)
+                // 4. (y_shelf, z_base_start) -> Top-Left of Base
+                // 5. (y_bot, z_base_start) -> Bot-Left of Base
+                // 6. (y_bot, z_tip_end) -> Bot-Right of Base
+
+                pts = [
+                    new THREE.Vector3(0, y_top, z_tip_end),
+                    new THREE.Vector3(0, y_top, z_tip_start),
+                    new THREE.Vector3(0, y_shelf, z_tip_start),
+                    new THREE.Vector3(0, y_shelf, z_base_start),
+                    new THREE.Vector3(0, y_bot, z_base_start),
+                    new THREE.Vector3(0, y_bot, z_tip_end)
+                ];
+            } else {
+                // Top: Base y=4. Tip y=3.
+                y_bot = min(3);
+                y_shelf = max(3);
+                y_top = max(4);
+
+                // Tip at y=3 (y_bot..y_shelf) covers z=3.
+                // Base at y=4 (y_shelf..y_top) covers z=2..3.
+
+                // Vertices:
+                // 1. (y_bot, z_tip_end) -> Bot-Right of Tip
+                // 2. (y_bot, z_tip_start) -> Bot-Left of Tip
+                // 3. (y_shelf, z_tip_start) -> Top-Left of Tip (Notch)
+                // 4. (y_shelf, z_base_start) -> Bot-Left of Base
+                // 5. (y_top, z_base_start) -> Top-Left of Base
+                // 6. (y_top, z_tip_end) -> Top-Right of Base
+
+                pts = [
+                    new THREE.Vector3(0, y_bot, z_tip_end),
+                    new THREE.Vector3(0, y_bot, z_tip_start),
+                    new THREE.Vector3(0, y_shelf, z_tip_start),
+                    new THREE.Vector3(0, y_shelf, z_base_start),
+                    new THREE.Vector3(0, y_top, z_base_start),
+                    new THREE.Vector3(0, y_top, z_tip_end)
+                ];
+            }
+
+            buildManualExtension(pts, x_min, x_max, 'Y2');
+        }
+
+        // Generic builder for extruded profiles along X
+        // pts: Array of Vector3 (x is ignored/0, y, z) defining the YZ profile
+        function buildManualExtension(pts, x_min, x_max, color) {
+            const vertices = [];
+            const addLine = (p1, p2) => { vertices.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z); };
+
+            // Edges on Min X Face
+            for(let i=0; i<pts.length; i++) {
+                const p1 = pts[i].clone(); p1.x = x_min;
+                const p2 = pts[(i+1)%pts.length].clone(); p2.x = x_min;
+                addLine(p1, p2);
+            }
+            // Edges on Max X Face
+            for(let i=0; i<pts.length; i++) {
+                const p1 = pts[i].clone(); p1.x = x_max;
+                const p2 = pts[(i+1)%pts.length].clone(); p2.x = x_max;
+                addLine(p1, p2);
+            }
+            // Connecting Edges (Struts)
+            for(let i=0; i<pts.length; i++) {
+                const p1 = pts[i].clone(); p1.x = x_min;
+                const p2 = pts[i].clone(); p2.x = x_max;
+                addLine(p1, p2);
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+            const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ visible: false }));
+            const lineMat = new THREE.LineBasicMaterial({ color: componentColors[color], transparent: true, opacity: 0.5 });
+            const lines = new THREE.LineSegments(geometry, lineMat);
+            lines.name = "edges";
+            mesh.add(lines);
+            mesh.userData = { assignedComponent: color, isGhostExtension: true, basePos: new THREE.Vector3(0, 0, 0) };
+            cubeGroup.add(mesh);
+        }
+
+        function createZ1Extension(side) {
+            const shape = new THREE.Shape();
+            const x0_min = 0 * SPACING - OFFSET - 0.5, x0_max = 0 * SPACING - OFFSET + 0.5, x1_max = 1 * SPACING - OFFSET + 0.5;
+            if (side === 'front') {
+                const z_neg1_min = -1 * SPACING - OFFSET - 0.5, z_neg1_max = -1 * SPACING - OFFSET + 0.5, z_0_max = 0 * SPACING - OFFSET + 0.5;
+                shape.moveTo(x0_min, z_0_max); shape.lineTo(x0_min, z_neg1_min); shape.lineTo(x1_max, z_neg1_min); shape.lineTo(x1_max, z_neg1_max); shape.lineTo(x0_max, z_neg1_max); shape.lineTo(x0_max, z_0_max); shape.lineTo(x0_min, z_0_max);
+            } else {
+                const z3_min = 3 * SPACING - OFFSET - 0.5, z3_max = 3 * SPACING - OFFSET + 0.5, z4_max = 4 * SPACING - OFFSET + 0.5;
+                shape.moveTo(x0_min, z3_min); shape.lineTo(x0_max, z3_min); shape.lineTo(x0_max, z3_max); shape.lineTo(x1_max, z3_max); shape.lineTo(x1_max, z4_max); shape.lineTo(x0_min, z4_max); shape.lineTo(x0_min, z3_min);
+            }
+            const y_min = 1 * SPACING - OFFSET - 0.5, y_max = 2 * SPACING - OFFSET + 0.5;
+            const geometry = new THREE.ExtrudeGeometry(shape, { depth: y_max - y_min, bevelEnabled: false });
+            geometry.translate(0, 0, -(y_max - y_min)/2);
+            geometry.rotateX(-Math.PI / 2);
+            geometry.translate(0, (y_min + y_max)/2, 0);
+            const material = new THREE.MeshBasicMaterial({ visible: false });
+            const mesh = new THREE.Mesh(geometry, material);
+            const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: componentColors['Z1'], transparent: true, opacity: 0.5 }));
+            lines.name = "edges";
+            mesh.add(lines);
+            mesh.userData = { assignedComponent: 'Z1', isGhostExtension: true, basePos: new THREE.Vector3(0, 0, 0) };
+            cubeGroup.add(mesh);
+        }
+
+        function createZ2Extension(side) {
+            const shape = new THREE.Shape();
+            const x2_min = 2 * SPACING - OFFSET - 0.5, x2_max = 2 * SPACING - OFFSET + 0.5, x3_max = 3 * SPACING - OFFSET + 0.5;
+            if (side === 'front') {
+                const z_neg1_min = -1 * SPACING - OFFSET - 0.5, z_neg1_max = -1 * SPACING - OFFSET + 0.5, z_0_max = 0 * SPACING - OFFSET + 0.5;
+                shape.moveTo(x3_max, z_0_max); shape.lineTo(x3_max, z_neg1_min); shape.lineTo(x2_min, z_neg1_min); shape.lineTo(x2_min, z_neg1_max); shape.lineTo(x2_max, z_neg1_max); shape.lineTo(x2_max, z_0_max); shape.lineTo(x3_max, z_0_max);
+            } else {
+                const z3_min = 3 * SPACING - OFFSET - 0.5, z3_max = 3 * SPACING - OFFSET + 0.5, z4_max = 4 * SPACING - OFFSET + 0.5;
+                shape.moveTo(x3_max, z3_min); shape.lineTo(x2_max, z3_min); shape.lineTo(x2_max, z3_max); shape.lineTo(x2_min, z3_max); shape.lineTo(x2_min, z4_max); shape.lineTo(x3_max, z4_max); shape.lineTo(x3_max, z3_min);
+            }
+            const y_min = 1 * SPACING - OFFSET - 0.5, y_max = 2 * SPACING - OFFSET + 0.5;
+            const geometry = new THREE.ExtrudeGeometry(shape, { depth: y_max - y_min, bevelEnabled: false });
+            geometry.translate(0, 0, -(y_max - y_min)/2);
+            geometry.rotateX(-Math.PI / 2);
+            geometry.translate(0, (y_min + y_max)/2, 0);
+            const material = new THREE.MeshBasicMaterial({ visible: false });
+            const mesh = new THREE.Mesh(geometry, material);
+            const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: componentColors['Z2'], transparent: true, opacity: 0.5 }));
+            lines.name = "edges";
+            mesh.add(lines);
+            mesh.userData = { assignedComponent: 'Z2', isGhostExtension: true, basePos: new THREE.Vector3(0, 0, 0) };
+            cubeGroup.add(mesh);
+        }
+
+        function createStandardCube(x, y, z) {
+            const geometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+            const membership = getMembership(x, y, z);
+            let assigned = membership.length > 0 ? membership[0] : 'none';
+            const cube = new THREE.Mesh(geometry, getMaterialForComponent(assigned));
+
+            const px = x * SPACING - OFFSET, py = y * SPACING - OFFSET, pz = z * SPACING - OFFSET;
+            cube.position.set(px, py, pz);
+            cube.userData = {
+                id: `${x}-${y}-${z}`, gridPos: {x,y,z}, membership: membership,
+                assignedComponent: assigned, isChangeable: membership.length > 1,
+                basePos: new THREE.Vector3(px, py, pz)
+            };
+
+            const edges = new THREE.EdgesGeometry(geometry);
+            const lines = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.2 }));
+            lines.name = "edges";
+            cube.add(lines);
+
+            const label = createTextSprite(`(${x},${y},${z})`);
+            cube.add(label);
+            textMeshes.push(label);
+            cubeGroup.add(cube);
+
+            if (membership.length > 1) {
+                const btn = document.createElement('button');
+                btn.id = `btn-cube-${cube.userData.id}`;
+                btn.className = `cube-btn bg-${assigned}`;
+
+                const coordsSpan = document.createElement('span');
+                coordsSpan.innerText = `${x},${y},${z}`;
+
+                const dotsContainer = document.createElement('div');
+                dotsContainer.className = 'membership-dots';
+                membership.forEach(m => {
+                    const dot = document.createElement('div');
+                    dot.className = `dot dot-${m} ${m === assigned ? 'active' : ''}`;
+                    dotsContainer.appendChild(dot);
+                });
+
+                btn.appendChild(coordsSpan);
+                btn.appendChild(dotsContainer);
+
+                btn.onclick = () => cycleCubeMembership(cube.userData.id);
+                document.getElementById('cubeControls').appendChild(btn);
+            }
+        }
+
+        function getMaterialForComponent(comp) {
+            return new THREE.MeshPhysicalMaterial({
+                color: componentColors[comp] || componentColors['none'], transparent: true, opacity: 0.85,
+                roughness: 0.1, metalness: 0.05, transmission: 0.1
+            });
+        }
+
+        function createTextSprite(message) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256; canvas.height = 128;
+            context.font = "Bold 40px Arial";
+            context.fillStyle = "rgba(255,255,255,1)";
+            context.textAlign = "center"; context.textBaseline = "middle";
+            context.fillText(message, 128, 64);
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.9, depthTest: false });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(1.5, 0.75, 1);
+            sprite.visible = showCoords;
+            return sprite;
+        }
+
+        function cycleCubeMembership(cubeId) {
+            const cube = cubeGroup.children.find(c => c.userData.id === cubeId);
+            if (!cube) return;
+
+            const m = cube.userData.membership;
+            const currentComp = cube.userData.assignedComponent;
+            let nextIndex = m.indexOf(currentComp);
+            let attempts = 0;
+            let found = false;
+            let nextComp = null;
+
+            while(attempts < m.length) {
+                nextIndex = (nextIndex + 1) % m.length;
+                const candidate = m[nextIndex];
+                if (visibleComponents[candidate]) {
+                    nextComp = candidate;
+                    found = true;
+                    break;
+                }
+                attempts++;
+            }
+
+            if (found) {
+                cube.userData.assignedComponent = nextComp;
+                updateMaterials();
+                updateUI();
+                updateMasks();
+            }
+        }
+
+        function updateMaterials() {
+            cubeGroup.children.forEach(obj => {
+                const comp = obj.userData.assignedComponent;
+                const isVisible = visibleComponents[comp];
+                const edges = obj.getObjectByName("edges");
+
+                if (obj.userData.isGhostExtension) {
+                    obj.visible = true;
+                    obj.material.visible = false;
+                    if (edges) {
+                        edges.material.color.setHex(componentColors[comp]);
+                        edges.material.opacity = 0.5;
+                    }
+                    return;
+                }
+
+                if (isVisible) {
+                    obj.visible = true;
+                    obj.material.visible = true;
+                    obj.material.color.setHex(componentColors[comp]);
+                    if(edges) {
+                        edges.material.color.setHex(0xffffff);
+                        edges.material.opacity = 0.2;
+                    }
+                } else {
+                    obj.visible = true;
+                    obj.material.visible = false;
+                    if(edges) {
+                        edges.material.color.setHex(componentColors[comp]);
+                        edges.material.opacity = 0.5;
+                    }
+                }
+            });
+            updateUI();
+        }
+
+        function updateLabels() { textMeshes.forEach(t => t.visible = showCoords); }
+
+        function updateUI() {
+            cubeGroup.children.forEach(cube => {
+                if (cube.userData.isChangeable) {
+                    const btn = document.getElementById(`btn-cube-${cube.userData.id}`);
+                    if (!btn) return;
+                    const assigned = cube.userData.assignedComponent;
+                    const membership = cube.userData.membership;
+                    const hasVisibleOption = membership.some(m => visibleComponents[m]);
+                    btn.disabled = !hasVisibleOption;
+                    btn.className = `cube-btn bg-${assigned}`;
+                    const dots = btn.querySelectorAll('.dot');
+                    dots.forEach((dot, idx) => {
+                        const comp = membership[idx];
+                        dot.className = `dot dot-${comp}`;
+                        if (comp === assigned) dot.classList.add('active');
+                        if (!visibleComponents[comp]) dot.style.opacity = '0.2';
+                        else dot.style.opacity = '1';
+                    });
+                }
+            });
+        }
+
+        window.toggleComponent = function(compName) {
+            visibleComponents[compName] = !visibleComponents[compName];
+            const btn = document.getElementById(`btn-${compName}`);
+            if (visibleComponents[compName]) {
+                btn.style.opacity = "1"; btn.classList.remove('line-through', 'opacity-50');
+            } else {
+                btn.style.opacity = "0.4"; btn.classList.add('line-through');
+            }
+            updateMaterials();
+            updateVisibilityButtonState();
+        };
+
+        function animate() {
+            requestAnimationFrame(animate);
+            cubeGroup.rotation.y += (targetRotationY - cubeGroup.rotation.y) * 0.1;
+            cubeGroup.rotation.x += (targetRotationX - cubeGroup.rotation.x) * 0.1;
+
+            const lerpSpeed = 0.1;
+            cubeGroup.children.forEach(child => {
+                const comp = child.userData.assignedComponent;
+                if (targetOffsets[comp]) {
+                    const targetPos = child.userData.basePos.clone().add(targetOffsets[comp]);
+                    child.position.lerp(targetPos, lerpSpeed);
+                }
+            });
+            updateDynamicArrows();
+            renderer.render(scene, camera);
+        }
+
+        const originalHandle3DClick = handle3DClick;
+        handle3DClick = function(clientX, clientY) {
+            mouse.x = (clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(cubeGroup.children, false);
+
+            if (intersects.length > 0) {
+                const hit = intersects.find(i => i.object.material && i.object.material.visible === true);
+                if (hit && hit.object.userData.id) {
+                    cycleCubeMembership(hit.object.userData.id);
+                }
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
